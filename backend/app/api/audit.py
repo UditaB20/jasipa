@@ -1,0 +1,34 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List, Optional
+from app.database.session import get_db
+from app.database.models import AuditLog, Candidate
+from app.schemas.audit import AuditLogResponse
+from app.mcp.tools import ATSTools
+
+router = APIRouter(prefix="/audit", tags=["Auditability & Candidate Memory"])
+
+@router.get("/candidate/{candidate_id}")
+def get_candidate_audit_trail(candidate_id: str, db: Session = Depends(get_db)):
+    """
+    Returns full chronological audit timeline answering:
+    'Why did this candidate receive this recommendation?'
+    """
+    history = ATSTools.get_candidate_history(db, candidate_id)
+    if "error" in history:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return history
+
+@router.get("/logs", response_model=List[AuditLogResponse])
+def get_recent_audit_logs(
+    limit: int = 50,
+    candidate_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Returns system-wide immutable event logs.
+    """
+    query = db.query(AuditLog)
+    if candidate_id:
+        query = query.filter(AuditLog.candidate_id == candidate_id)
+    return query.order_by(AuditLog.timestamp.desc()).limit(limit).all()

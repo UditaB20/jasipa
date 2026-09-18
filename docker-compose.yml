@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: jasipa_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: jasipa_user
+      POSTGRES_PASSWORD: jasipa_password
+      POSTGRES_DB: jasipa_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jasipa_user -d jasipa_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: jasipa_backend
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://jasipa_user:jasipa_password@postgres:5432/jasipa_db
+      SECRET_KEY: jasipa-super-secret-jwt-key-2026
+      LLM_PROVIDER: mock
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: jasipa_frontend
+    restart: always
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
