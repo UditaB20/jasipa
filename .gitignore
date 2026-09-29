@@ -1,8 +1,22 @@
 # ===== SECRETS — NEVER COMMIT =====
 .env
+.env.*
+!.env.example
 backend/.env
 frontend/.env
-*.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Credential & key files
+*.json.key
+*service-account*.json
+*credentials*.json
+*-keyfile.json
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python
 __pycache__/
