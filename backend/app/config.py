@@ -15,11 +15,10 @@ class Settings(BaseSettings):
         "sqlite:///./jasipa.db"
     )
     
-    # LLM Configuration
-    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY", None)
+    # LLM Configuration (Google Gemini)
     GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY", None)
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "mock") # "openai", "gemini", or "mock"
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "gemini") # "gemini" or "mock"
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     
     # File storage
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
@@ -28,7 +27,7 @@ class Settings(BaseSettings):
     BIAS_DISPARITY_THRESHOLD: float = 0.80 # 4/5ths rule (80% rule)
     
     class Config:
-        env_file = ".env"
+        env_file = [".env", "../.env"]
         extra = "ignore"
 
 settings = Settings()

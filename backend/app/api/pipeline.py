@@ -14,6 +14,7 @@ from app.schemas.assessment import SkillAssessorOutput, CultureFitOutput
 from app.mcp.tools import ATSTools
 from app.services.audit_service import log_event
 from app.orchestration.workflow import create_candidate_workflow
+from app.auth.security import require_hr
 
 router = APIRouter(prefix="/pipeline", tags=["Agent Pipeline Orchestration"])
 
@@ -22,7 +23,7 @@ class PipelineRunRequest(BaseModel):
     jd_id: Optional[str] = None
 
 @router.post("/run-screen-resume")
-def run_screen_resume(req: PipelineRunRequest, db: Session = Depends(get_db)):
+def run_screen_resume(req: PipelineRunRequest, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     cand = db.query(Candidate).filter(Candidate.candidate_id == req.candidate_id).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -67,7 +68,7 @@ def run_screen_resume(req: PipelineRunRequest, db: Session = Depends(get_db)):
     return screening_out
 
 @router.post("/run-panel")
-def run_panel_synthesis(req: PipelineRunRequest, db: Session = Depends(get_db)):
+def run_panel_synthesis(req: PipelineRunRequest, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     cand = db.query(Candidate).filter(Candidate.candidate_id == req.candidate_id).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -206,7 +207,7 @@ def run_panel_synthesis(req: PipelineRunRequest, db: Session = Depends(get_db)):
     }
 
 @router.post("/run-full-graph")
-def run_full_graph_orchestration(req: PipelineRunRequest, db: Session = Depends(get_db)):
+def run_full_graph_orchestration(req: PipelineRunRequest, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     """
     Executes the entire LangGraph orchestration workflow end-to-end for a candidate.
     """
@@ -240,8 +241,8 @@ def run_full_graph_orchestration(req: PipelineRunRequest, db: Session = Depends(
         "candidate_id": cand.candidate_id,
         "jd_id": jd.jd_id,
         "resume_text": cand.resume_text or "",
-        "jd_data": jd.__dict__,
-        "rubric_data": rubric.__dict__,
+        "jd_data": {k: v for k, v in jd.__dict__.items() if not k.startswith('_')},
+        "rubric_data": {k: v for k, v in rubric.__dict__.items() if not k.startswith('_')},
         "tech_questions": tech_qs,
         "tech_answers": tech_answers,
         "beh_questions": beh_qs,

@@ -11,6 +11,7 @@ from app.api.reviews import router as reviews_router
 from app.api.bias import router as bias_router
 from app.api.audit import router as audit_router
 from app.api.mcp_api import router as mcp_router
+from app.api.candidate_portal import router as candidate_router
 
 # Create all database tables
 Base.metadata.create_all(bind=engine)
@@ -40,6 +41,7 @@ app.include_router(reviews_router, prefix=settings.API_V1_STR)
 app.include_router(bias_router, prefix=settings.API_V1_STR)
 app.include_router(audit_router, prefix=settings.API_V1_STR)
 app.include_router(mcp_router, prefix=settings.API_V1_STR)
+app.include_router(candidate_router, prefix=settings.API_V1_STR)
 
 @app.get("/")
 def root():

@@ -9,6 +9,7 @@ from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateD
 from app.services.resume_parser import extract_text_from_pdf, extract_preliminary_metadata
 from app.services.audit_service import log_event
 from app.config import settings
+from app.auth.security import get_current_user, require_hr
 
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
@@ -126,6 +127,7 @@ async def upload_candidate_resume(
 def list_candidates(
     stage: Optional[str] = None,
     jd_id: Optional[str] = None,
+    current_user: dict = Depends(require_hr),
     db: Session = Depends(get_db)
 ):
     query = db.query(Candidate)
@@ -136,7 +138,19 @@ def list_candidates(
     return query.order_by(Candidate.created_at.desc()).all()
 
 @router.get("/{candidate_id}", response_model=CandidateDetailResponse)
-def get_candidate_details(candidate_id: str, db: Session = Depends(get_db)):
+def get_candidate_details(
+    candidate_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Enforce strict candidate data isolation:
+    # If the user is a Candidate, they can ONLY view their own candidate_id
+    if current_user.get("role") != "HR" and current_user.get("candidate_id") != candidate_id:
+        raise HTTPException(
+            status_code=403, 
+            detail="Access forbidden: You cannot view records belonging to another candidate."
+        )
+
     cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")

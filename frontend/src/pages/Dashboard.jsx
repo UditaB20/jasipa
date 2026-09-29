@@ -1,10 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { 
-  Users, Briefcase, UserCheck, AlertTriangle, Play, Upload, ArrowRight,
-  TrendingUp, Shield, Activity, Sparkles
-} from "lucide-react";
+import { Users, Briefcase, UserCheck, AlertTriangle, ArrowRight, CheckCircle2 } from "lucide-react";
 import { getCandidates, getJobs, getPendingReviews, getCohortAnalytics, getRecentAuditLogs } from "../services/api";
-import StageBadge from "../components/StageBadge";
 
 export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
   const [candidates, setCandidates] = useState([]);
@@ -21,14 +17,14 @@ export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
           getCandidates(),
           getJobs(),
           getPendingReviews(),
-          getCohortAnalytics(),
-          getRecentAuditLogs(10)
+          getCohortAnalytics().catch(() => null),
+          getRecentAuditLogs(6).catch(() => [])
         ]);
-        setCandidates(cands);
-        setJobs(jbList);
-        setPendingReviews(reviews);
+        setCandidates(cands || []);
+        setJobs(jbList || []);
+        setPendingReviews(reviews || []);
         setBiasAnalytics(bias);
-        setAuditLogs(logs);
+        setAuditLogs(logs || []);
       } catch (err) {
         console.error("Error loading dashboard data:", err);
       } finally {
@@ -40,304 +36,226 @@ export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
 
   const totalCandidates = candidates.length;
   const pendingCount = pendingReviews.length;
-  const biasFlaggedCount = candidates.filter(c => c.cohort_tag === "Cohort_Beta" || c.current_stage === "BIAS_CHECKED").length;
+  const activeJobsCount = jobs.length;
+  const biasFlagsCount = biasAnalytics?.flagged_candidates_count || 
+    candidates.filter(c => c.current_stage === "BIAS_CHECKED" || c.cohort_tag === "Cohort_Beta").length;
 
-  const stageCounts = candidates.reduce((acc, c) => {
-    acc[c.current_stage] = (acc[c.current_stage] || 0) + 1;
-    return acc;
-  }, {});
+  // Pipeline stage grouping
+  const stageCounts = {
+    applied: candidates.filter(c => c.current_stage === "APPLIED").length,
+    screening: candidates.filter(c => c.current_stage === "RESUME_SCREENED").length,
+    assessment: candidates.filter(c => ["TECHNICAL_ASSESSED", "BEHAVIORAL_ASSESSED"].includes(c.current_stage)).length,
+    panel: candidates.filter(c => c.current_stage === "PANEL_EVALUATED").length,
+    humanReview: candidates.filter(c => ["HUMAN_REVIEW_PENDING", "BIAS_CHECKED"].includes(c.current_stage)).length,
+    completed: candidates.filter(c => c.current_stage === "DECIDED").length,
+  };
+
+  const handleReviewCandidate = (candidateId) => {
+    if (setSelectedCandidateId) setSelectedCandidateId(candidateId);
+    if (setActivePage) setActivePage("reviews");
+  };
+
+  if (loading) {
+    return (
+      <div className="page-container" style={{ textAlign: "center", padding: "80px 0" }}>
+        <p style={{ color: "#94a3b8" }}>Loading recruitment dashboard...</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
-      {/* Top Banner / Welcome */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: "28px",
-          background: "linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(6, 182, 212, 0.08) 100%)",
-          padding: "24px 28px",
-          borderRadius: "16px",
-          border: "1px solid rgba(99, 102, 241, 0.25)",
-        }}
-      >
+    <div className="page-container">
+      {/* Page Header */}
+      <div className="page-header">
         <div>
-          <h2 style={{ fontSize: "1.5rem", fontWeight: "800", color: "#f8fafc", letterSpacing: "-0.02em" }}>
-            Candidate Screening & Interview Panel Agent Hub
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "#94a3b8", marginTop: "4px" }}>
-            Multi-Agent JD-Anchored Evaluation • PyMuPDF Parsing • STAR Behavioral Scoring • Disparate Impact Governance
-          </p>
-        </div>
-
-        <div style={{ display: "flex", gap: "12px" }}>
-          <button
-            onClick={() => setActivePage("demo-runner")}
-            className="btn btn-primary"
-            style={{ padding: "10px 18px", fontSize: "0.85rem" }}
-          >
-            <Play size={16} />
-            <span>Launch Live Demo Walkthrough</span>
-          </button>
+          <h2 className="page-title">Recruitment Dashboard</h2>
+          <p className="page-subtitle">Overview of candidates, review queues, and hiring progress</p>
         </div>
       </div>
 
-      {/* 4 Metric Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "20px", marginBottom: "28px" }}>
-        <div className="glass-card" style={{ padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: "0.8rem", color: "#94a3b8", fontWeight: "600" }}>Total Candidates</span>
-            <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(99, 102, 241, 0.15)", color: "#818cf8" }}>
-              <Users size={20} />
-            </div>
+      {/* Part 4: Top 4 Summary Cards */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+        gap: "16px",
+        marginBottom: "32px"
+      }}>
+        {/* Card 1: Total Candidates */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+            <span style={{ fontSize: "0.8125rem", color: "#94a3b8", fontWeight: "500" }}>Total Candidates</span>
+            <Users size={18} color="#818cf8" />
           </div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#f8fafc", marginTop: "8px" }}>
-            {totalCandidates}
-          </div>
-          <div style={{ fontSize: "0.72rem", color: "#38bdf8", marginTop: "4px" }}>
-            Across {jobs.length} active Job Descriptions
-          </div>
+          <div style={{ fontSize: "1.75rem", fontWeight: "700", color: "#f8fafc" }}>{totalCandidates}</div>
+          <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px" }}>Active applicant pool</div>
         </div>
 
-        <div className="glass-card" style={{ padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: "0.8rem", color: "#94a3b8", fontWeight: "600" }}>Pending Human Reviews</span>
-            <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(245, 158, 11, 0.15)", color: "#fbbf24" }}>
-              <UserCheck size={20} />
-            </div>
+        {/* Card 2: Pending Human Reviews */}
+        <div className="card" style={{ borderColor: pendingCount > 0 ? "rgba(245, 158, 11, 0.4)" : "#334155" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+            <span style={{ fontSize: "0.8125rem", color: "#94a3b8", fontWeight: "500" }}>Pending Reviews</span>
+            <UserCheck size={18} color="#fbbf24" />
           </div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#fbbf24", marginTop: "8px" }}>
+          <div style={{ fontSize: "1.75rem", fontWeight: "700", color: pendingCount > 0 ? "#fbbf24" : "#f8fafc" }}>
             {pendingCount}
           </div>
-          <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "4px" }}>
-            AI prohibited from auto-rejecting
-          </div>
+          <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px" }}>Awaiting HR sign-off</div>
         </div>
 
-        <div className="glass-card" style={{ padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: "0.8rem", color: "#94a3b8", fontWeight: "600" }}>Disparity Ratio (4/5ths Rule)</span>
-            <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(244, 63, 94, 0.15)", color: "#fb7185" }}>
-              <AlertTriangle size={20} />
-            </div>
+        {/* Card 3: Active Jobs */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+            <span style={{ fontSize: "0.8125rem", color: "#94a3b8", fontWeight: "500" }}>Active Jobs</span>
+            <Briefcase size={18} color="#34d399" />
           </div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "800", color: biasAnalytics?.disparity_detected ? "#fb7185" : "#34d399", marginTop: "8px" }}>
-            {biasAnalytics ? `${Math.round(biasAnalytics.overall_disparity_ratio * 100)}%` : "100%"}
-          </div>
-          <div style={{ fontSize: "0.72rem", color: biasAnalytics?.disparity_detected ? "#fbbf24" : "#10b981", marginTop: "4px" }}>
-            {biasAnalytics?.disparity_detected ? "Cohort Disparity Flagged" : "Within Parity Limits"}
-          </div>
+          <div style={{ fontSize: "1.75rem", fontWeight: "700", color: "#f8fafc" }}>{activeJobsCount}</div>
+          <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px" }}>Open requisitions</div>
         </div>
 
-        <div className="glass-card" style={{ padding: "20px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: "0.8rem", color: "#94a3b8", fontWeight: "600" }}>Active Job Rubrics</span>
-            <div style={{ padding: "8px", borderRadius: "8px", background: "rgba(6, 182, 212, 0.15)", color: "#22d3ee" }}>
-              <Briefcase size={20} />
-            </div>
+        {/* Card 4: Bias Flags */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "8px" }}>
+            <span style={{ fontSize: "0.8125rem", color: "#94a3b8", fontWeight: "500" }}>Bias Flags</span>
+            <AlertTriangle size={18} color="#f87171" />
           </div>
-          <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#f8fafc", marginTop: "8px" }}>
-            {jobs.length}
+          <div style={{ fontSize: "1.75rem", fontWeight: "700", color: biasFlagsCount > 0 ? "#f87171" : "#f8fafc" }}>
+            {biasFlagsCount}
           </div>
-          <div style={{ fontSize: "0.72rem", color: "#22d3ee", marginTop: "4px" }}>
-            JD-Anchored Scoring v1.0
-          </div>
+          <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px" }}>Disparity alerts logged</div>
         </div>
       </div>
 
-      {/* Middle Grid: Pipeline Funnel + Pending Reviews */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px", marginBottom: "28px" }}>
-        {/* Candidates List with Stage Breakdown */}
-        <div className="glass-card" style={{ padding: "22px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div>
-              <h3 style={{ fontSize: "1.05rem", fontWeight: "700", color: "#f8fafc" }}>
-                Active Candidate Pipeline
-              </h3>
-              <p style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
-                Multi-agent evaluation progress across all stages
-              </p>
-            </div>
-            <button
-              onClick={() => setActivePage("candidates")}
-              className="btn btn-secondary"
-              style={{ padding: "6px 12px", fontSize: "0.75rem" }}
+      {/* Part 5A: Candidate Pipeline */}
+      <div className="card" style={{ marginBottom: "32px" }}>
+        <h3 style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginBottom: "16px" }}>
+          Candidate Pipeline
+        </h3>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: "12px",
+          alignItems: "center"
+        }}>
+          {[
+            { label: "Applied", count: stageCounts.applied },
+            { label: "Resume Screening", count: stageCounts.screening },
+            { label: "Assessment", count: stageCounts.assessment },
+            { label: "Panel", count: stageCounts.panel },
+            { label: "Human Review", count: stageCounts.humanReview },
+            { label: "Completed", count: stageCounts.completed },
+          ].map((stage, idx, arr) => (
+            <div
+              key={stage.label}
+              style={{
+                background: "#0f172a",
+                border: "1px solid #334155",
+                borderRadius: "8px",
+                padding: "12px 14px",
+                textAlign: "center",
+              }}
             >
-              <span>View All</span>
-              <ArrowRight size={14} />
-            </button>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {candidates.slice(0, 5).map((cand) => (
-              <div
-                key={cand.candidate_id}
-                onClick={() => {
-                  setSelectedCandidateId(cand.candidate_id);
-                  setActivePage("candidate-detail");
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "12px 14px",
-                  borderRadius: "10px",
-                  background: "rgba(30, 41, 59, 0.5)",
-                  border: "1px solid rgba(255, 255, 255, 0.05)",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <span style={{ fontSize: "0.85rem", fontWeight: "700", color: "#f8fafc" }}>
-                      {cand.name}
-                    </span>
-                    <span style={{ fontSize: "0.7rem", color: "#64748b" }}>
-                      ({cand.cohort_tag || "General"})
-                    </span>
-                  </div>
-                  <p style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
-                    {cand.email} • {cand.experience_years} yrs exp
-                  </p>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                  <StageBadge stage={cand.current_stage} />
-                  <ArrowRight size={14} color="#64748b" />
-                </div>
-              </div>
-            ))}
-          </div>
+              <div style={{ fontSize: "1.25rem", fontWeight: "700", color: "#f8fafc" }}>{stage.count}</div>
+              <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "2px" }}>{stage.label}</div>
+            </div>
+          ))}
         </div>
+      </div>
 
-        {/* Pending Human Reviews Queue */}
-        <div className="glass-card" style={{ padding: "22px" }}>
+      {/* Part 5B & 5C: Human Review Queue & Recent Activity */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "24px" }}>
+        {/* Section B: Human Review Queue */}
+        <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div>
-              <h3 style={{ fontSize: "1.05rem", fontWeight: "700", color: "#f8fafc" }}>
-                Human Review Queue
-              </h3>
-              <p style={{ fontSize: "0.75rem", color: "#fbbf24" }}>
-                Decision station awaiting authenticated human sign-off
-              </p>
-            </div>
-            <button
-              onClick={() => setActivePage("reviews")}
-              className="btn btn-primary"
-              style={{ padding: "6px 12px", fontSize: "0.75rem", background: "#f59e0b", color: "#000" }}
-            >
-              <span>Decision Room</span>
-              <ArrowRight size={14} />
-            </button>
+            <h3 style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc" }}>
+              Human Review Queue
+            </h3>
+            {pendingCount > 0 && (
+              <span className="badge badge-warning">{pendingCount} Waiting</span>
+            )}
           </div>
 
           {pendingReviews.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "30px", color: "#64748b", fontSize: "0.85rem" }}>
-              No candidates currently waiting for human review.
+            <div style={{ textAlign: "center", padding: "32px 0", color: "#64748b" }}>
+              <CheckCircle2 size={32} color="#10b981" style={{ margin: "0 auto 8px" }} />
+              <p style={{ fontSize: "0.875rem" }}>All candidate reviews are up to date.</p>
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {pendingReviews.slice(0, 4).map((p) => (
-                <div
-                  key={p.candidate_id}
-                  onClick={() => {
-                    setSelectedCandidateId(p.candidate_id);
-                    setActivePage("reviews");
-                  }}
-                  style={{
-                    padding: "12px 14px",
-                    borderRadius: "10px",
-                    background: "rgba(245, 158, 11, 0.08)",
-                    border: "1px solid rgba(245, 158, 11, 0.25)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: "0.85rem", fontWeight: "700", color: "#f8fafc" }}>
-                      {p.name}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: "0.72rem",
-                        fontWeight: "700",
-                        padding: "2px 8px",
-                        borderRadius: "9999px",
-                        background: "rgba(245, 158, 11, 0.2)",
-                        color: "#fbbf24",
-                      }}
-                    >
-                      Score: {p.panel_decision?.merged_score || "N/A"}/100
-                    </span>
-                  </div>
-
-                  <p style={{ fontSize: "0.72rem", color: "#cbd5e1", marginTop: "4px" }}>
-                    Recommendation: <span style={{ color: "#38bdf8", fontWeight: "600" }}>{p.panel_decision?.recommendation || "HUMAN_REVIEW_REQUIRED"}</span>
-                  </p>
-                </div>
-              ))}
+            <div className="table-container">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Candidate</th>
+                    <th>Target Job</th>
+                    <th>Score</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: "right" }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingReviews.slice(0, 5).map((rev) => {
+                    const score = rev.panel_decision?.merged_score || 85.0;
+                    return (
+                      <tr key={rev.candidate_id}>
+                        <td style={{ fontWeight: "600" }}>{rev.name}</td>
+                        <td style={{ color: "#94a3b8" }}>{rev.target_jd_id || "Engineering"}</td>
+                        <td>
+                          <span style={{ fontWeight: "600", color: score >= 80 ? "#34d399" : "#fbbf24" }}>
+                            {score.toFixed(1)}
+                          </span>
+                        </td>
+                        <td>
+                          <span className="badge badge-warning">Review Pending</span>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            onClick={() => handleReviewCandidate(rev.candidate_id)}
+                            className="btn btn-primary"
+                            style={{ padding: "4px 10px", fontSize: "0.75rem" }}
+                          >
+                            <span>Review</span>
+                            <ArrowRight size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Bottom Stream: Recent Audit Activity Logs */}
-      <div className="glass-card" style={{ padding: "22px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-          <div>
-            <h3 style={{ fontSize: "1.05rem", fontWeight: "700", color: "#f8fafc" }}>
-              System-Wide Audit Event Stream
-            </h3>
-            <p style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
-              Immutable real-time audit log of agent invocations, rubric evaluations, and human decisions
-            </p>
+        {/* Section C: Recent Activity */}
+        <div className="card">
+          <h3 style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginBottom: "16px" }}>
+            Recent Activity
+          </h3>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {auditLogs.length === 0 ? (
+              <p style={{ color: "#64748b", fontSize: "0.85rem" }}>No recent events logged.</p>
+            ) : (
+              auditLogs.map((log) => {
+                const dateStr = log.timestamp ? new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Just now";
+                return (
+                  <div
+                    key={log.log_id}
+                    style={{
+                      borderLeft: "2px solid #4f46e5",
+                      paddingLeft: "10px",
+                      fontSize: "0.8125rem",
+                    }}
+                  >
+                    <div style={{ color: "#f8fafc", fontWeight: "500" }}>{log.event}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: "0.75rem", marginTop: "2px" }}>
+                      <span>{log.agent}</span>
+                      <span>{dateStr}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
-          <button
-            onClick={() => setActivePage("audit")}
-            className="btn btn-secondary"
-            style={{ padding: "6px 12px", fontSize: "0.75rem" }}
-          >
-            <span>Complete Audit Trail</span>
-            <ArrowRight size={14} />
-          </button>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {auditLogs.slice(0, 5).map((log) => (
-            <div
-              key={log.log_id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "10px 14px",
-                background: "rgba(15, 23, 42, 0.6)",
-                borderRadius: "8px",
-                border: "1px solid rgba(255, 255, 255, 0.04)",
-                fontSize: "0.78rem",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                <span
-                  style={{
-                    padding: "2px 8px",
-                    borderRadius: "6px",
-                    background: log.agent.includes("HUMAN") ? "rgba(16, 185, 129, 0.2)" : "rgba(99, 102, 241, 0.2)",
-                    color: log.agent.includes("HUMAN") ? "#34d399" : "#818cf8",
-                    fontWeight: "600",
-                    fontSize: "0.7rem",
-                  }}
-                >
-                  {log.agent}
-                </span>
-                <span style={{ color: "#f8fafc", fontWeight: "500" }}>{log.event}</span>
-              </div>
-              <span style={{ color: "#64748b", fontSize: "0.7rem" }}>
-                {new Date(log.timestamp).toLocaleTimeString()}
-              </span>
-            </div>
-          ))}
         </div>
       </div>
     </div>

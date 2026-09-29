@@ -1,7 +1,6 @@
-from typing import Dict, Any
+from typing import Dict, Any, TypedDict, Optional, List
 from langgraph.graph import StateGraph, END
 from sqlalchemy.orm import Session
-from app.orchestration.state import CandidateGraphState
 from app.agents.resume_screener import ResumeScreenerAgent
 from app.agents.skill_assessor import SkillAssessorAgent
 from app.agents.culture_fit import CultureFitAgent
@@ -12,13 +11,40 @@ from app.services.audit_service import log_event
 from app.schemas.screening import ResumeScreeningOutput
 from app.schemas.assessment import SkillAssessorOutput, CultureFitOutput
 
+
+class CandidateState(TypedDict, total=False):
+    # Core identifiers (always present)
+    candidate_id: str
+    jd_id: str
+
+    # Inputs passed in at start
+    resume_text: str
+    jd_data: Dict[str, Any]
+    rubric_data: Dict[str, Any]
+    tech_questions: List[Dict[str, Any]]
+    tech_answers: List[Dict[str, str]]
+    beh_questions: List[Dict[str, Any]]
+    beh_answers: List[Dict[str, str]]
+
+    # Stage outputs (set by each node)
+    screening_result: Optional[Dict[str, Any]]
+    skill_result: Optional[Dict[str, Any]]
+    behavioral_result: Optional[Dict[str, Any]]
+    panel_result: Optional[Dict[str, Any]]
+    bias_result: Optional[Dict[str, Any]]
+
+    # Progress tracking
+    current_stage: str
+
+
 def create_candidate_workflow(db: Session):
     """
     Builds the LangGraph stateful candidate screening and interview panel workflow.
+    Uses TypedDict state to correctly propagate all fields across nodes.
     """
 
     # 1. Node: Screen Resume
-    def node_screen_resume(state: Dict[str, Any]) -> Dict[str, Any]:
+    def node_screen_resume(state: CandidateState) -> CandidateState:
         cid = state["candidate_id"]
         jd_id = state["jd_id"]
         resume_text = state.get("resume_text", "")
@@ -26,7 +52,7 @@ def create_candidate_workflow(db: Session):
         rubric_data = state.get("rubric_data", {})
 
         screening_out = ResumeScreenerAgent.evaluate(cid, resume_text, jd_data, rubric_data)
-        
+
         # Save via ATS Tool
         ATSTools.save_screening_result(
             db,
@@ -53,12 +79,13 @@ def create_candidate_workflow(db: Session):
         )
 
         return {
+            **state,
             "screening_result": screening_out.model_dump(),
             "current_stage": "RESUME_SCREENED"
         }
 
     # 2. Node: Assess Technical Skills
-    def node_assess_skills(state: Dict[str, Any]) -> Dict[str, Any]:
+    def node_assess_skills(state: CandidateState) -> CandidateState:
         cid = state["candidate_id"]
         jd_id = state["jd_id"]
         jd_data = state.get("jd_data", {})
@@ -93,12 +120,13 @@ def create_candidate_workflow(db: Session):
         )
 
         return {
+            **state,
             "skill_result": skill_out.model_dump(),
             "current_stage": "TECHNICAL_ASSESSED"
         }
 
     # 3. Node: Assess Behavioral Culture-Fit
-    def node_assess_culture(state: Dict[str, Any]) -> Dict[str, Any]:
+    def node_assess_culture(state: CandidateState) -> CandidateState:
         cid = state["candidate_id"]
         jd_id = state["jd_id"]
         jd_data = state.get("jd_data", {})
@@ -133,17 +161,18 @@ def create_candidate_workflow(db: Session):
         )
 
         return {
+            **state,
             "behavioral_result": culture_out.model_dump(),
             "current_stage": "BEHAVIORAL_ASSESSED"
         }
 
     # 4. Node: Panel Coordinator Synthesis
-    def node_panel_coordinate(state: Dict[str, Any]) -> Dict[str, Any]:
+    def node_panel_coordinate(state: CandidateState) -> CandidateState:
         cid = state["candidate_id"]
         jd_id = state["jd_id"]
         jd_data = state.get("jd_data", {})
         rubric_data = state.get("rubric_data", {})
-        
+
         screening = ResumeScreeningOutput(**state["screening_result"])
         technical = SkillAssessorOutput(**state["skill_result"])
         behavioral = CultureFitOutput(**state["behavioral_result"])
@@ -192,12 +221,13 @@ def create_candidate_workflow(db: Session):
         out_dict["decision_id"] = saved["decision_id"]
 
         return {
+            **state,
             "panel_result": out_dict,
             "current_stage": "PANEL_EVALUATED"
         }
 
     # 5. Node: Bias Checker
-    def node_check_bias(state: Dict[str, Any]) -> Dict[str, Any]:
+    def node_check_bias(state: CandidateState) -> CandidateState:
         cid = state["candidate_id"]
         decision_id = state["panel_result"]["decision_id"]
 
@@ -225,13 +255,14 @@ def create_candidate_workflow(db: Session):
         )
 
         return {
+            **state,
             "bias_result": bias_out.model_dump(),
             "current_stage": "HUMAN_REVIEW_PENDING"
         }
 
-    # Construct the graph
-    workflow = StateGraph(dict)
-    
+    # Construct the graph with TypedDict state
+    workflow = StateGraph(CandidateState)
+
     workflow.add_node("screen_resume", node_screen_resume)
     workflow.add_node("assess_skills", node_assess_skills)
     workflow.add_node("assess_culture", node_assess_culture)

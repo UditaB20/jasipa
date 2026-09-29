@@ -6,7 +6,7 @@ from app.database.models import Candidate, HumanReview, PanelDecision, BiasCheck
 from app.schemas.review import HumanReviewCreate, HumanReviewResponse
 from app.mcp.tools import ATSTools
 from app.services.audit_service import log_event
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, require_hr
 
 router = APIRouter(prefix="/reviews", tags=["Human Review & Final Decisions"])
 
@@ -22,7 +22,10 @@ def model_to_dict(model_instance):
     return d
 
 @router.get("/pending", response_model=List[Dict[str, Any]])
-def get_pending_human_reviews(db: Session = Depends(get_db)):
+def get_pending_human_reviews(
+    current_user: dict = Depends(require_hr),
+    db: Session = Depends(get_db)
+):
     """
     Returns all candidates who have completed panel & bias checks and are awaiting final human decision.
     """
@@ -51,7 +54,7 @@ def get_pending_human_reviews(db: Session = Depends(get_db)):
 @router.post("/decide", response_model=HumanReviewResponse)
 def submit_human_decision(
     payload: HumanReviewCreate, 
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_hr),
     db: Session = Depends(get_db)
 ):
     """

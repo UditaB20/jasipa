@@ -1,17 +1,8 @@
 import React from "react";
-import { ShieldCheck, Sparkles, Layers, GraduationCap, Briefcase, UserCheck } from "lucide-react";
+import { LogOut, Shield, User } from "lucide-react";
 
-export default function Navbar({ currentRole, setCurrentRole, activePage, setActivePage }) {
-  const handleRoleChange = (role) => {
-    setCurrentRole(role);
-    if (role === "STUDENT") {
-      setActivePage("student-portal");
-    } else if (role === "REVIEWER") {
-      setActivePage("reviews");
-    } else {
-      setActivePage("dashboard");
-    }
-  };
+export default function Navbar({ currentUser, onLogout }) {
+  const isHR = currentUser?.role === "HR";
 
   return (
     <header
@@ -19,161 +10,85 @@ export default function Navbar({ currentRole, setCurrentRole, activePage, setAct
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "14px 28px",
-        background: "rgba(15, 23, 42, 0.8)",
-        backdropFilter: "blur(16px)",
-        borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
+        padding: "12px 28px",
+        background: "#0f172a",
+        borderBottom: "1px solid #334155",
         position: "sticky",
         top: 0,
-        zIndex: 50,
+        zIndex: 40,
       }}
     >
-      {/* Brand & Governance Badge */}
-      <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
-        <div 
-          onClick={() => currentRole === "STUDENT" ? setActivePage("student-portal") : setActivePage("dashboard")}
-          style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer" }}
-        >
-          <div
-            style={{
-              width: "36px",
-              height: "36px",
-              borderRadius: "10px",
-              background: "linear-gradient(135deg, #6366f1 0%, #06b6d4 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: "0 0 15px rgba(99, 102, 241, 0.4)",
-            }}
-          >
-            <Layers size={20} color="#fff" />
-          </div>
-          <div>
-            <h1 style={{ fontSize: "1.15rem", fontWeight: "800", letterSpacing: "-0.02em", color: "#f8fafc" }}>
-              JASIPA <span style={{ fontSize: "0.8rem", color: "#06b6d4", fontWeight: "600" }}>v1.0</span>
-            </h1>
-            <p style={{ fontSize: "0.7rem", color: "#94a3b8", fontWeight: "500" }}>
-              Job Applicant Screening & Interview Panel Agent
-            </p>
-          </div>
-        </div>
-
-        {/* Strict Governance Rule Pill */}
+      {/* Brand */}
+      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
         <div
           style={{
+            width: "32px",
+            height: "32px",
+            borderRadius: "8px",
+            background: isHR ? "#4f46e5" : "#059669",
             display: "flex",
             alignItems: "center",
-            gap: "6px",
-            background: "rgba(16, 185, 129, 0.12)",
-            border: "1px solid rgba(16, 185, 129, 0.3)",
-            padding: "4px 12px",
-            borderRadius: "9999px",
-            fontSize: "0.72rem",
-            color: "#34d399",
-            fontWeight: "600",
+            justifyContent: "center",
           }}
         >
-          <ShieldCheck size={14} />
-          <span>Governance: Zero Autonomous Rejection</span>
+          <Shield size={18} color="#ffffff" />
+        </div>
+        <div>
+          <h1 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", lineHeight: "1.2" }}>
+            JASIPA
+          </h1>
+          <p style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
+            {isHR ? "Talent & Interview Panel System" : "Candidate Career Portal"}
+          </p>
         </div>
       </div>
 
-      {/* Right Controls: 3-Way Role Switcher & Live Demo */}
-      <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-        {/* Quick 1-Click Demo Launcher */}
+      {/* Right Controls: User Name, Role Label, Logout */}
+      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+        {/* User Info */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div
+            style={{
+              width: "32px",
+              height: "32px",
+              borderRadius: "50%",
+              background: "#1e293b",
+              border: "1px solid #334155",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <User size={16} color="#94a3b8" />
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.85rem", fontWeight: "600", color: "#f8fafc" }}>
+              {currentUser?.name || "Authenticated User"}
+            </div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+              <span
+                className={`badge ${isHR ? "badge-primary" : "badge-success"}`}
+                style={{ fontSize: "0.68rem", padding: "1px 8px" }}
+              >
+                {isHR ? "HR Admin" : "Candidate"}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Vertical divider */}
+        <div style={{ width: "1px", height: "24px", background: "#334155" }} />
+
+        {/* Logout Button */}
         <button
-          onClick={() => setActivePage("demo-runner")}
-          className="btn btn-primary"
-          style={{
-            padding: "6px 14px",
-            fontSize: "0.8rem",
-            background: "linear-gradient(135deg, #ec4899 0%, #8b5cf6 100%)",
-          }}
+          onClick={onLogout}
+          className="btn btn-outline"
+          style={{ padding: "6px 12px", fontSize: "0.8rem", gap: "6px" }}
+          title="Sign out of your account"
         >
-          <Sparkles size={15} />
-          <span>1-Click Live Demo</span>
+          <LogOut size={14} />
+          <span>Logout</span>
         </button>
-
-        {/* 3-Way Role Switcher (RBAC) */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            background: "rgba(30, 41, 59, 0.8)",
-            borderRadius: "8px",
-            padding: "3px",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-          }}
-        >
-          <button
-            onClick={() => handleRoleChange("STUDENT")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "5px 12px",
-              borderRadius: "6px",
-              fontSize: "0.75rem",
-              fontWeight: "600",
-              border: "none",
-              cursor: "pointer",
-              background: currentRole === "STUDENT" ? "#06b6d4" : "transparent",
-              color: currentRole === "STUDENT" ? "#000" : "#94a3b8",
-              transition: "all 0.2s",
-            }}
-          >
-            <GraduationCap size={14} />
-            <span>Student / Candidate</span>
-          </button>
-
-          <button
-            onClick={() => handleRoleChange("HR_ADMIN")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "5px 12px",
-              borderRadius: "6px",
-              fontSize: "0.75rem",
-              fontWeight: "600",
-              border: "none",
-              cursor: "pointer",
-              background: currentRole === "HR_ADMIN" ? "#6366f1" : "transparent",
-              color: currentRole === "HR_ADMIN" ? "#fff" : "#94a3b8",
-              transition: "all 0.2s",
-            }}
-          >
-            <Briefcase size={14} />
-            <span>HR Admin</span>
-          </button>
-
-          <button
-            onClick={() => handleRoleChange("REVIEWER")}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "5px 12px",
-              borderRadius: "6px",
-              fontSize: "0.75rem",
-              fontWeight: "600",
-              border: "none",
-              cursor: "pointer",
-              background: currentRole === "REVIEWER" ? "#10b981" : "transparent",
-              color: currentRole === "REVIEWER" ? "#fff" : "#94a3b8",
-              transition: "all 0.2s",
-            }}
-          >
-            <UserCheck size={14} />
-            <span>Reviewer</span>
-          </button>
-        </div>
-
-        {/* Active Role Indicator */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.75rem", color: "#94a3b8" }}>
-          <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981" }} />
-          <span>{currentRole} Mode</span>
-        </div>
       </div>
     </header>
   );
