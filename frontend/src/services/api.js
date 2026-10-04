@@ -88,6 +88,11 @@ export const getPendingReviews = () => fetchApi("/reviews/pending");
 export const submitHumanDecision = (data) => 
   fetchApi("/reviews/decide", { method: "POST", body: JSON.stringify(data) });
 export const getCohortAnalytics = () => fetchApi("/bias/analytics");
+export const recordHiringOutcome = (data) => fetchApi("/learning/outcomes", { method: "POST", body: JSON.stringify(data) });
+export const getHiringOutcomes = () => fetchApi("/learning/outcomes");
+export const getEligibleOutcomes = () => fetchApi("/learning/eligible");
+export const getHiringLearningAnalytics = () => fetchApi("/learning/analytics");
+export const getHiringOutcomeHistory = () => fetchApi("/learning/history");
 
 // Audit & MCP APIs (HR / System)
 export const getCandidateAuditTrail = (id) => fetchApi(`/audit/candidate/${id}`);
@@ -113,3 +118,20 @@ export const updateCandidateProfile = (data) =>
 export const updateHRProfile = (data) => 
   fetchApi("/auth/profile", { method: "PUT", body: JSON.stringify(data) });
 
+// Candidate self-service resume upload (PDF → parse → update profile)
+export const uploadCandidateResume = async (file) => {
+  const token = localStorage.getItem("token");
+  const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_BASE}/candidate/upload-resume`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Upload failed" }));
+    throw new Error(err.detail || "Upload failed");
+  }
+  return await res.json();
+};

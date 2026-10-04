@@ -1,4 +1,6 @@
 from typing import Dict, Any, List
+from app.agents.base_agent import LLMStrategy, StrategyChain, TemplateSynthesisStrategy
+from app.config import panel_coordinator_config
 from app.schemas.screening import ResumeScreeningOutput
 from app.schemas.assessment import SkillAssessorOutput, CultureFitOutput
 from app.schemas.panel import PanelDecisionOutput
@@ -34,9 +36,9 @@ class PanelCoordinatorAgent:
 
         # Check for insufficient evidence states
         has_insufficient_evidence = (
-            screening.status == "INSUFFICIENT_EVIDENCE" or
-            technical.status == "INSUFFICIENT_EVIDENCE" or
-            behavioral.status == "INSUFFICIENT_EVIDENCE"
+            screening.status != "COMPLETED" or
+            technical.status != "COMPLETED" or
+            behavioral.status != "COMPLETED"
         )
 
         merged_score = round((r_score * resume_wt) + (s_score * skill_wt) + (c_score * culture_wt), 1)
@@ -76,20 +78,53 @@ class PanelCoordinatorAgent:
             )
 
         if has_insufficient_evidence:
-            disagreements.append("Incomplete data: One or more stages returned INSUFFICIENT_EVIDENCE.")
+            disagreements.append("Incomplete data: One or more stages returned insufficient or failed evaluation status.")
 
         # 4. Evidence aggregation
         evidence.extend(screening.evidence[:2])
         evidence.extend(technical.evidence[:2])
         evidence.extend(behavioral.evidence[:2])
 
-        # 5. Recommendation Formulation (Strictly Human Review-Anchored)
+        # 5. Deterministic routing: explanation generation cannot change this result.
+        major_divergence = score_spread >= 30
         if has_insufficient_evidence:
             recommendation = "ADDITIONAL_INFORMATION_REQUIRED"
-        elif merged_score >= 75 and not disagreements:
+        elif merged_score < 50:
+            recommendation = "HUMAN_REVIEW_REQUIRED"
+        elif major_divergence:
+            recommendation = "HUMAN_REVIEW_REQUIRED"
+        elif merged_score >= 75:
             recommendation = "PROCEED_TO_HUMAN_REVIEW"
         else:
             recommendation = "HUMAN_REVIEW_REQUIRED"
+
+        final_strengths = strengths if strengths else ["No score dimension reached the strength threshold."]
+        final_gaps = gaps if gaps else ["No score dimension fell below the gap threshold."]
+        final_disagreements = disagreements if disagreements else ["Agent scores were aligned across evaluation dimensions."]
+
+        # Optional LLM prose is restricted to the structured facts above; only deterministic code routes.
+        strategy_map = {"template": TemplateSynthesisStrategy()}
+        if panel_coordinator_config.use_llm_synthesis:
+            strategy_map["llm"] = LLMStrategy()
+            order = ("llm", "template")
+        else:
+            order = ("template",)
+        chain = StrategyChain([(name, strategy_map[name]) for name in order],
+            timeout_seconds=panel_coordinator_config.synthesis_timeout_seconds, agent_name="PanelCoordinatorAgent",
+            candidate_id=candidate_id)
+        prompt = (f"Scores resume={r_score}/100, technical={s_score}/100, behavioral={c_score}/100, merged={merged_score}/100. "
+                  f"Strengths={final_strengths}. Gaps={final_gaps}. Divergences={final_disagreements}. "
+                  f"Routing label={recommendation}. Detail level={panel_coordinator_config.explanation_detail_level}. "
+                  "Write a concise factual summary for an HR reviewer based only on these supplied facts. "
+                  "Do not infer personal traits, add unsupported claims, or alter the routing label.")
+        synthesis = chain.execute(
+            candidate_id=candidate_id,
+            system_prompt=("You write evidence-grounded evaluation summaries for human review. Never hire or reject candidates. "
+                           "Return JSON with summary (string), decision_factors (string list), highlighted_concerns (string list), "
+                           "and highlighted_strengths (string list)."),
+            user_prompt=prompt, required_keys=("summary",), model_name=panel_coordinator_config.llm_synthesis_model)
+        synthesis_data = synthesis["data"]
+        synthesis_error = next((a["error"] for a in synthesis["attempts"] if not a["success"]), None)
 
         return PanelDecisionOutput(
             candidate_id=candidate_id,
@@ -99,9 +134,17 @@ class PanelCoordinatorAgent:
             culture_score=c_score,
             merged_score=merged_score,
             recommendation=recommendation,
-            strengths=strengths if strengths else ["Candidate meets baseline prerequisites for review."],
-            gaps=gaps if gaps else ["No major qualification deficits identified."],
-            disagreements=disagreements if disagreements else ["Agent perspectives are aligned across all evaluation dimensions."],
+            strengths=final_strengths,
+            gaps=final_gaps,
+            disagreements=final_disagreements,
             evidence=evidence,
-            rubric_version=rubric_version
+            rubric_version=rubric_version,
+            natural_language_summary=synthesis_data.get("summary"),
+            decision_factors=synthesis_data.get("decision_factors", []),
+            highlighted_concerns=synthesis_data.get("highlighted_concerns", final_gaps),
+            highlighted_strengths=synthesis_data.get("highlighted_strengths", final_strengths),
+            used_llm_synthesis=synthesis["successful_strategy"] == "llm",
+            synthesis_latency_ms=synthesis["total_latency_ms"],
+            synthesis_strategy=synthesis["successful_strategy"] or "none",
+            synthesis_error=synthesis_error
         )

@@ -159,7 +159,15 @@ class ATSTools:
         gaps: List[str],
         disagreements: List[str],
         evidence: List[str],
-        rubric_version: str = "1.0"
+        rubric_version: str = "1.0",
+        natural_language_summary: Optional[str] = None,
+        decision_factors: Optional[List[str]] = None,
+        highlighted_concerns: Optional[List[str]] = None,
+        highlighted_strengths: Optional[List[str]] = None,
+        used_llm_synthesis: bool = False,
+        synthesis_latency_ms: int = 0,
+        synthesis_strategy: str = "template",
+        synthesis_error: Optional[str] = None
     ) -> Dict[str, Any]:
         decision = PanelDecision(
             candidate_id=candidate_id,
@@ -173,7 +181,15 @@ class ATSTools:
             gaps=gaps,
             disagreements=disagreements,
             evidence=evidence,
-            rubric_version=rubric_version
+            rubric_version=rubric_version,
+            natural_language_summary=natural_language_summary,
+            decision_factors=decision_factors or [],
+            highlighted_concerns=highlighted_concerns or [],
+            highlighted_strengths=highlighted_strengths or [],
+            used_llm_synthesis=used_llm_synthesis,
+            synthesis_latency_ms=synthesis_latency_ms,
+            synthesis_strategy=synthesis_strategy,
+            synthesis_error=synthesis_error
         )
         db.add(decision)
         

@@ -15,6 +15,14 @@ class PanelDecisionOutput(BaseModel):
     disagreements: List[str]
     evidence: List[str]
     rubric_version: str = "1.0"
+    natural_language_summary: Optional[str] = None
+    decision_factors: List[str] = []
+    highlighted_concerns: List[str] = []
+    highlighted_strengths: List[str] = []
+    used_llm_synthesis: bool = False
+    synthesis_latency_ms: int = 0
+    synthesis_strategy: str = "template"
+    synthesis_error: Optional[str] = None
 
 class PanelDecisionResponse(PanelDecisionOutput):
     decision_id: str

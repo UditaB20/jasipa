@@ -33,6 +33,10 @@ class SkillAssessorOutput(BaseModel):
     evidence: List[str]
     confidence: float = 1.0
     status: str = "COMPLETED" # COMPLETED or INSUFFICIENT_EVIDENCE
+    strategy_used: str = "none"
+    fallback_chain_depth: int = 0
+    fallback_latency_ms: int = 0
+    attempts_before_success: int = 0
 
 class CultureFitOutput(BaseModel):
     candidate_id: str
@@ -43,6 +47,10 @@ class CultureFitOutput(BaseModel):
     evidence: List[str]
     confidence: float = 1.0
     status: str = "COMPLETED" # COMPLETED or INSUFFICIENT_EVIDENCE
+    strategy_used: str = "none"
+    fallback_chain_depth: int = 0
+    fallback_latency_ms: int = 0
+    attempts_before_success: int = 0
 
 class AssessmentResponse(BaseModel):
     assessment_id: str

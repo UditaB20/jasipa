@@ -38,6 +38,7 @@ class Candidate(Base):
     panel_decisions = relationship("PanelDecision", back_populates="candidate", cascade="all, delete-orphan")
     bias_checks = relationship("BiasCheck", back_populates="candidate", cascade="all, delete-orphan")
     human_reviews = relationship("HumanReview", back_populates="candidate", cascade="all, delete-orphan")
+    hiring_outcomes = relationship("HiringOutcome", back_populates="candidate", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="candidate", cascade="all, delete-orphan")
 
 
@@ -133,6 +134,14 @@ class PanelDecision(Base):
     gaps = Column(JSON, default=list)
     disagreements = Column(JSON, default=list)
     evidence = Column(JSON, default=list)
+    natural_language_summary = Column(Text, nullable=True)
+    decision_factors = Column(JSON, default=list)
+    highlighted_concerns = Column(JSON, default=list)
+    highlighted_strengths = Column(JSON, default=list)
+    used_llm_synthesis = Column(Boolean, default=False)
+    synthesis_latency_ms = Column(Integer, default=0)
+    synthesis_strategy = Column(String, default="template")
+    synthesis_error = Column(String, nullable=True)
     rubric_version = Column(String, default="1.0")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -179,6 +188,67 @@ class HumanReview(Base):
 
     # Relationships
     candidate = relationship("Candidate", back_populates="human_reviews")
+
+
+class HiringOutcome(Base):
+    """Post-hire outcomes entered by HR; kept separate from candidate evaluation."""
+    __tablename__ = "hiring_outcomes"
+
+    outcome_id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.candidate_id"), nullable=False, unique=True, index=True)
+    hired_date = Column(DateTime, nullable=False)
+    role = Column(String, nullable=True)
+    performance_rating = Column(Float, nullable=True)  # 1–5, manager-reported
+    still_employed = Column(Boolean, nullable=True)
+    months_employed = Column(Integer, nullable=True)
+    manager_name = Column(String, nullable=True)
+    manager_email = Column(String, nullable=True)
+    manager_id = Column(String, nullable=True)
+    department = Column(String, nullable=True)
+    departure_date = Column(DateTime, nullable=True)
+    tenure_days = Column(Integer, nullable=True)
+    promotion_date = Column(DateTime, nullable=True)
+    promotion_role = Column(String, nullable=True)
+    performance_comments = Column(Text, nullable=True)
+    technical_skills_rating = Column(Float, nullable=True)
+    communication_rating = Column(Float, nullable=True)
+    leadership_rating = Column(Float, nullable=True)
+    rehire_eligible = Column(Boolean, nullable=True)
+    attrition_reason = Column(Text, nullable=True)
+    manager_feedback = Column(Text, nullable=True)
+    recorded_by = Column(String, nullable=False)
+    recorded_date = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    candidate = relationship("Candidate", back_populates="hiring_outcomes")
+
+
+class StrategyMetric(Base):
+    __tablename__ = "strategy_metrics"
+
+    metric_id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    invocation_id = Column(String, nullable=False, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.candidate_id"), nullable=True, index=True)
+    agent_name = Column(String, nullable=False, index=True)
+    strategy_name = Column(String, nullable=False, index=True)
+    fallback_level = Column(Integer, nullable=False, default=0)
+    success = Column(Boolean, nullable=False)
+    error_code = Column(String, nullable=True)
+    latency_ms = Column(Integer, nullable=False, default=0)
+    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+
+
+class HumanExpertTask(Base):
+    __tablename__ = "human_expert_tasks"
+
+    task_id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    candidate_id = Column(String, ForeignKey("candidates.candidate_id"), nullable=True, index=True)
+    agent_name = Column(String, nullable=False)
+    reason = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="PENDING", index=True)
+    assigned_to = Column(String, nullable=False, default="HR_EXPERT")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class AuditLog(Base):

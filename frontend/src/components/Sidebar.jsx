@@ -6,8 +6,9 @@ import {
   Code2, 
   UserCheck, 
   Scale, 
-  History, 
-  Settings
+  History,
+  Settings,
+  BrainCircuit
 } from "lucide-react";
 
 export default function Sidebar({ activePage, setActivePage, pendingReviewCount = 0 }) {
@@ -24,6 +25,7 @@ export default function Sidebar({ activePage, setActivePage, pendingReviewCount 
       badgeColor: "warning"
     },
     { id: "bias", label: "Bias Monitor", icon: Scale },
+    { id: "learning", label: "Hiring Outcomes", icon: BrainCircuit },
     { id: "audit", label: "Audit Logs", icon: History },
     { id: "settings", label: "Settings", icon: Settings },
   ];

@@ -164,7 +164,15 @@ def run_panel_synthesis(req: PipelineRunRequest, current_user: dict = Depends(re
         gaps=panel_out.gaps,
         disagreements=panel_out.disagreements,
         evidence=panel_out.evidence,
-        rubric_version=panel_out.rubric_version
+        rubric_version=panel_out.rubric_version,
+        natural_language_summary=panel_out.natural_language_summary,
+        decision_factors=panel_out.decision_factors,
+        highlighted_concerns=panel_out.highlighted_concerns,
+        highlighted_strengths=panel_out.highlighted_strengths,
+        used_llm_synthesis=panel_out.used_llm_synthesis,
+        synthesis_latency_ms=panel_out.synthesis_latency_ms,
+        synthesis_strategy=panel_out.synthesis_strategy,
+        synthesis_error=panel_out.synthesis_error
     )
 
     log_event(

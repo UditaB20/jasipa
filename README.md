@@ -153,3 +153,12 @@ python -m pytest tests/
 11. **Step 11:** Human Reviewer inspects complete evidence dossier.
 12. **Step 12:** Human Reviewer signs off with `APPROVE` / `REJECT` / `REQUEST_MORE_INFORMATION` with notes.
 13. **Step 13:** System logs complete immutable audit trail.
+# Hiring outcomes and historical context
+
+JASIPA now includes an HR-only outcome tracking flow at **Hiring Outcomes**. HR can record hire date, manager-reported performance (1–5), employment status, tenure, promotion date, attrition reason, and feedback for candidates with a human `APPROVE` decision. The outcome can be updated as new information arrives. Aggregate analytics are available at `GET /api/learning/analytics`.
+
+The human review queue shows an uncalibrated score-agreement heuristic and, when data is available, a descriptive comparison against prior hires in the same job with resume, technical, and behavioral scores within five points. A historical success rate is shown only when at least five similar hires have recorded outcome data; success is defined here as still employed and, when a rating exists, rating at least 3.5/5. These figures are descriptive and must not be treated as a probability or automated recommendation.
+
+The outcomes page labels performance on a 1–5 scale, shows the number of known employment statuses next to retention, warns on small samples, and lists each outcome beside the latest panel scores. New outcome submissions require a past hire date, manager rating, explicit employment status, and tenure from 0 to 120 months; manager name and feedback are optional, as is a promotion date. HR can select an existing record to update it. Candidate names, emails, or cohorts marked with a standalone `test`, `demo`, `mock`, or `e2e` marker are omitted from outcome analytics and tracking.
+
+This initial learning increment does not automatically change rubric weights or role thresholds, and it does not claim per-question effectiveness: submitted assessments currently store aggregate scores rather than a structured score for each question. Outcome data is self-reported by HR/manager and should be interpreted with its coverage in mind. Human approval remains mandatory.

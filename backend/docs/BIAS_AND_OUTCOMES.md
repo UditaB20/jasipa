@@ -1,0 +1,9 @@
+# Bias checks and hiring outcomes
+
+`BiasCheckerAgent` runs three cohort-level descriptive checks: selection-rate disparate impact, recorded outcome success rates, and observed score floors for panel `PROCEED_TO_HUMAN_REVIEW` recommendations. Outcome success is defined as a manager-reported performance rating of at least 3.5/5. A ratio below the configured 4/5ths threshold is a warning signal. Observed proceed score floors are proxies and cannot establish that different decision thresholds were applied.
+
+All checks report sample size, status, reason, and supporting details. Cohort comparisons with fewer than 10 records are marked insufficient; dashboard rates are suppressed below n=10. Confidence labels are coarse volume indicators, not statistical confidence intervals. Outcome summaries are unadjusted for job, tenure, and other confounders, so they should guide investigation rather than conclusions about an individual or group. Every flag or insufficient-data result calls for human review; the checks never change an individual's status.
+
+Hiring outcome recording is implemented by `OutcomeRecordingService` and requires an existing human APPROVE review, a past hire date, valid outcome fields, and manager email matching the authenticated HR account. This authenticates the submitting account; it does not verify the manager through an external identity provider. One outcome row is updated per candidate. Test/demo candidates are excluded from outcome analytics.
+
+Use `GET /api/admin/bias-checks/summary`, `/api/admin/bias-checks/by-cohort`, and `/api/admin/outcomes` for HR-only aggregate views. Use `POST /api/learning/outcomes` to record or update one candidate's outcome and `GET /api/learning/analytics` for descriptive learning metrics. No outcomes automatically alter rubrics, model weights, or hiring decisions.

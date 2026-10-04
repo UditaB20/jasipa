@@ -11,6 +11,7 @@ import BiasAnalytics from "./pages/BiasAnalytics";
 import SettingsPage from "./pages/SettingsPage";
 import CandidatePortal from "./pages/CandidatePortal";
 import LoginPage from "./pages/LoginPage";
+import LearningPage from "./pages/LearningPage";
 import { getPendingReviews } from "./services/api";
 
 export default function App() {
@@ -132,6 +133,7 @@ export default function App() {
           )}
 
           {activePage === "bias" && <BiasAnalytics />}
+          {activePage === "learning" && <LearningPage currentUser={currentUser} />}
 
           {activePage === "audit" && (
             <CandidateDetail

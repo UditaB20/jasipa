@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   Briefcase, 
   CheckCircle2, 
@@ -14,7 +14,9 @@ import {
   LayoutDashboard,
   Edit3,
   Save,
-  X
+  X,
+  Upload,
+  FileUp
 } from "lucide-react";
 import { 
   getCandidateProfile, 
@@ -25,7 +27,8 @@ import {
   submitCandidateTechnical, 
   submitCandidateBehavioral, 
   getCandidateTimeline,
-  updateCandidateProfile
+  updateCandidateProfile,
+  uploadCandidateResume
 } from "../services/api";
 
 export default function CandidatePortal({ currentUser, onLogout }) {
@@ -64,6 +67,12 @@ export default function CandidatePortal({ currentUser, onLogout }) {
   });
   const [saveProfileLoading, setSaveProfileLoading] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState(null);
+
+  // Resume upload state
+  const [resumeUploading, setResumeUploading] = useState(false);
+  const [resumeUploadMsg, setResumeUploadMsg] = useState(null);
+  const resumeFileRef = useRef(null);
+
 
   const startEditProfile = () => {
     setEditFormData({
@@ -106,7 +115,32 @@ export default function CandidatePortal({ currentUser, onLogout }) {
     }
   };
 
+  const handleResumeUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setResumeUploadMsg({ type: "error", text: "Only PDF files are accepted." });
+      return;
+    }
+    setResumeUploading(true);
+    setResumeUploadMsg(null);
+    try {
+      const result = await uploadCandidateResume(file);
+      setResumeUploadMsg({
+        type: "success",
+        text: `Resume uploaded! Found ${result.skills_extracted?.length || 0} skills — profile updated automatically.`
+      });
+      loadCandidateData();
+    } catch (err) {
+      setResumeUploadMsg({ type: "error", text: "Upload failed: " + err.message });
+    } finally {
+      setResumeUploading(false);
+      if (resumeFileRef.current) resumeFileRef.current.value = "";
+    }
+  };
+
   useEffect(() => {
+
     loadCandidateData();
   }, []);
 

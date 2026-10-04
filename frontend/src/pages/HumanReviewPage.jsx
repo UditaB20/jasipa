@@ -174,6 +174,30 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
             {/* Bias Alert Banner */}
             <BiasAlertBanner biasCheck={latestBias} />
 
+            <div className="glass-card" style={{ padding: "16px 20px" }}>
+              <h4 style={{ color: "#f8fafc", marginBottom: "8px" }}>Decision context</h4>
+              <p style={{ color: "#cbd5e1", fontSize: "0.82rem", margin: "4px 0" }}>
+                Agent score agreement: <strong>{pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.confidence?.label || "UNAVAILABLE"}</strong>
+                {pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.confidence?.agreement_score != null && ` (${Math.round(pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id).confidence.agreement_score * 100)}%)`}
+                <span style={{ color: "#94a3b8" }}> · agreement heuristic, not a probability of job success</span>
+              </p>
+              {(() => {
+                const history = pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.historical_context;
+                return <p style={{ color: "#cbd5e1", fontSize: "0.82rem", margin: "4px 0" }}>
+                  Similar prior hires: <strong>{history?.similar_hires ?? 0}</strong>
+                  {history?.success_rate != null ? ` · ${Math.round(history.success_rate * 100)}% recorded successful outcomes` : " · insufficient outcome history for a rate"}
+                  <span style={{ color: "#94a3b8" }}> · same role and scores within 5 points</span>
+                </p>;
+              })()}
+            </div>
+
+            {latestPanel?.natural_language_summary && <div className="glass-card" style={{ padding: "16px 20px" }}>
+              <h4 style={{ color: "#f8fafc", marginBottom: 8 }}>Panel summary</h4>
+              <p style={{ color: "#cbd5e1", fontSize: "0.85rem", lineHeight: 1.6 }}>{latestPanel.natural_language_summary}</p>
+              <p style={{ color: "#94a3b8", fontSize: "0.72rem", marginTop: 8 }}>Explanation: {latestPanel.synthesis_strategy || "template"}{latestPanel.synthesis_latency_ms != null ? ` · ${latestPanel.synthesis_latency_ms} ms` : ""}. Recommendation routing is determined by the scored evidence; a human makes the final decision.</p>
+              {!!latestPanel.decision_factors?.length && <ul style={{ color: "#cbd5e1", fontSize: "0.78rem", paddingLeft: 18, marginBottom: 0 }}>{latestPanel.decision_factors.map((factor, i) => <li key={i}>{factor}</li>)}</ul>}
+            </div>}
+
             {/* Multi-Agent Score Synthesis */}
             <ScoreRadar
               resumeScore={latestScreening?.score || 0}

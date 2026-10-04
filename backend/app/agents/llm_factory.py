@@ -11,12 +11,14 @@ class LLMService:
     """
 
     @staticmethod
-    def call_llm(system_prompt: str, user_prompt: str, response_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def call_llm(system_prompt: str, user_prompt: str, response_schema: Optional[Dict[str, Any]] = None,
+                 timeout_seconds: float = 30.0, model_name: Optional[str] = None,
+                 raise_errors: bool = False) -> Dict[str, Any]:
         if settings.LLM_PROVIDER in ["gemini", "default"] and settings.GEMINI_API_KEY:
             try:
                 import httpx
-                model_name = settings.LLM_MODEL or "gemini-1.5-flash"
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={settings.GEMINI_API_KEY}"
+                model = model_name or settings.LLM_MODEL or "gemini-1.5-flash"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={settings.GEMINI_API_KEY}"
                 payload = {
                     "contents": [{
                         "parts": [{"text": f"{system_prompt}\n\nTask: {user_prompt}\n\nReturn strictly valid JSON matching the requested structure."}]
@@ -25,7 +27,7 @@ class LLMService:
                         "responseMimeType": "application/json"
                     }
                 }
-                response = httpx.post(url, json=payload, timeout=30.0)
+                response = httpx.post(url, json=payload, timeout=timeout_seconds)
                 if response.status_code == 200:
                     data = response.json()
                     content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -34,8 +36,12 @@ class LLMService:
                         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
                     return json.loads(content)
                 else:
-                    print(f"[LLMService] Gemini API returned HTTP {response.status_code}: {response.text}")
+                    if raise_errors:
+                        raise RuntimeError(f"LLM_HTTP_{response.status_code}")
+                    print(f"[LLMService] Gemini API returned HTTP {response.status_code}")
             except Exception as e:
+                if raise_errors:
+                    raise
                 print(f"[LLMService] Gemini call failed, falling back to local evaluator: {e}")
 
         # Fallback to deterministic local evaluation

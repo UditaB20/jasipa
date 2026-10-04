@@ -40,7 +40,20 @@ class CandidateState(TypedDict, total=False):
 def create_candidate_workflow(db: Session):
     """
     Builds the LangGraph stateful candidate screening and interview panel workflow.
-    Uses TypedDict state to correctly propagate all fields across nodes.
+
+    ARCHITECTURE (Key Design Decisions):
+    ─────────────────────────────────────
+    1. LangGraph:     Explicit StateGraph(CandidateState) with 5 sequential nodes.
+    2. MCP Usage:     MCP/ATS tools are called BY nodes AFTER agents complete evaluation.
+                      Agents NEVER call tools directly — they only produce structured output.
+    3. LLM Strategy:  LLM (Gemini) generates JSON responses; agents parse them.
+                      Every agent has a deterministic regex/heuristic FALLBACK if LLM fails.
+    4. Panel Coord:   Pure Python weighted merge — no LLM call. Deterministic synthesis.
+    5. Bias Impact:   Bias flags are logged but NEVER affect recommendation scores.
+                      All candidates always route to HUMAN_REVIEW_PENDING.
+    6. Invocation:    /pipeline/run-full-graph endpoint calls graph.invoke(initial_state).
+
+    Graph Edges: screen_resume → assess_skills → assess_culture → panel_coordinate → check_bias → END
     """
 
     # 1. Node: Screen Resume
@@ -199,7 +212,15 @@ def create_candidate_workflow(db: Session):
             gaps=panel_out.gaps,
             disagreements=panel_out.disagreements,
             evidence=panel_out.evidence,
-            rubric_version=panel_out.rubric_version
+            rubric_version=panel_out.rubric_version,
+            natural_language_summary=panel_out.natural_language_summary,
+            decision_factors=panel_out.decision_factors,
+            highlighted_concerns=panel_out.highlighted_concerns,
+            highlighted_strengths=panel_out.highlighted_strengths,
+            used_llm_synthesis=panel_out.used_llm_synthesis,
+            synthesis_latency_ms=panel_out.synthesis_latency_ms,
+            synthesis_strategy=panel_out.synthesis_strategy,
+            synthesis_error=panel_out.synthesis_error
         )
 
         log_event(

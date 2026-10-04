@@ -9,6 +9,12 @@ class BiasCheckOutput(BaseModel):
     reason: str
     cohort_breakdown: Dict[str, Any]
     requires_human_review: bool = True # Always True per project governance
+    checks: List[Dict[str, Any]] = []
+    overall_flag: bool = False
+    recommendations: List[str] = []
+    confidence_level: str = "low"
+    sample_size: int = 0
+    action_required: bool = True
 
 class BiasCheckResponse(BiasCheckOutput):
     check_id: str
