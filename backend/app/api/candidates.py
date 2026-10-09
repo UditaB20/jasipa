@@ -14,7 +14,11 @@ from app.auth.security import get_current_user, require_hr
 router = APIRouter(prefix="/candidates", tags=["Candidates"])
 
 @router.post("/", response_model=CandidateResponse)
-def create_candidate(payload: CandidateCreate, db: Session = Depends(get_db)):
+def create_candidate(
+    payload: CandidateCreate, 
+    current_user: dict = Depends(require_hr),
+    db: Session = Depends(get_db)
+):
     # Extract preliminary skills if resume provided
     skills = payload.skills_extracted or []
     if payload.resume_text and not skills:
@@ -44,8 +48,8 @@ def create_candidate(payload: CandidateCreate, db: Session = Depends(get_db)):
     log_event(
         db,
         stage="APPLIED",
-        event=f"Candidate Application Submitted: {candidate.name}",
-        agent="ATS_INGESTION",
+        event=f"Candidate Application Created by HR: {candidate.name}",
+        agent=f"HR_ADMIN ({current_user.get('name', 'Talent Team')})",
         candidate_id=candidate.candidate_id,
         input_reference={"email": candidate.email, "target_jd_id": candidate.target_jd_id},
         output={"current_stage": candidate.current_stage}
@@ -61,6 +65,7 @@ async def upload_candidate_resume(
     cohort_tag: Optional[str] = Form("General Cohort"),
     target_jd_id: Optional[str] = Form(None),
     file: UploadFile = File(...),
+    current_user: dict = Depends(require_hr),
     db: Session = Depends(get_db)
 ):
     # Validate PDF
@@ -157,15 +162,50 @@ def get_candidate_details(
     return cand
 
 @router.patch("/{candidate_id}", response_model=CandidateResponse)
-def update_candidate(candidate_id: str, payload: CandidateUpdate, db: Session = Depends(get_db)):
+def update_candidate(
+    candidate_id: str, 
+    payload: CandidateUpdate, 
+    current_user: dict = Depends(require_hr),
+    db: Session = Depends(get_db)
+):
     cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
     
     update_data = payload.model_dump(exclude_unset=True)
+
+    if "current_stage" in update_data:
+        target_stage = update_data["current_stage"]
+        if target_stage == "DECIDED":
+            raise HTTPException(
+                status_code=400,
+                detail="Direct stage update to 'DECIDED' is prohibited. Final hiring decisions must go through the Human Review governance process (/reviews/decide)."
+            )
+        allowed_stages = [
+            "APPLIED", "RESUME_SCREENED", "TECHNICAL_ASSESSED", 
+            "BEHAVIORAL_ASSESSED", "PANEL_EVALUATED", "HUMAN_REVIEW_PENDING", 
+            "MANUAL_REVIEW_REQUIRED"
+        ]
+        if target_stage not in allowed_stages:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid stage '{target_stage}'. Must be one of: {', '.join(allowed_stages)}"
+            )
+
     for key, value in update_data.items():
         setattr(cand, key, value)
 
     db.commit()
     db.refresh(cand)
+
+    log_event(
+        db,
+        stage=cand.current_stage,
+        event=f"Candidate Profile Updated by HR: {cand.name}",
+        agent=f"HR_ADMIN ({current_user.get('name', 'Talent Team')})",
+        candidate_id=cand.candidate_id,
+        input_reference={"updated_fields": list(update_data.keys())},
+        output={"current_stage": cand.current_stage}
+    )
+
     return cand

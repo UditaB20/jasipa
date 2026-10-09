@@ -40,7 +40,7 @@ settings = Settings()
 
 class PanelCoordinatorConfig(BaseSettings):
     use_llm_synthesis: bool = True
-    llm_synthesis_model: str = "gemini-1.5-flash"
+    llm_synthesis_model: str = "gemini-2.5-flash"
     synthesis_timeout_seconds: int = 10
     explanation_detail_level: Literal["brief", "detailed", "comprehensive"] = "detailed"
 

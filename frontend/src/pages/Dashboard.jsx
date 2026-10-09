@@ -14,12 +14,13 @@ export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
     async function loadData() {
       try {
         const [cands, jbList, reviews, bias, logs] = await Promise.all([
-          getCandidates(),
-          getJobs(),
-          getPendingReviews(),
+          getCandidates().catch(() => []),
+          getJobs().catch(() => []),
+          getPendingReviews().catch(() => []),
           getCohortAnalytics().catch(() => null),
           getRecentAuditLogs(6).catch(() => [])
         ]);
+
         setCandidates(cands || []);
         setJobs(jbList || []);
         setPendingReviews(reviews || []);
@@ -37,8 +38,8 @@ export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
   const totalCandidates = candidates.length;
   const pendingCount = pendingReviews.length;
   const activeJobsCount = jobs.length;
-  const biasFlagsCount = biasAnalytics?.flagged_candidates_count || 
-    candidates.filter(c => c.current_stage === "BIAS_CHECKED" || c.cohort_tag === "Cohort_Beta").length;
+  // Only real bias-checker output counts; no heuristic fallback.
+  const biasFlagsCount = biasAnalytics?.flagged_candidates_count ?? 0;
 
   // Pipeline stage grouping
   const stageCounts = {
@@ -193,15 +194,20 @@ export default function Dashboard({ setActivePage, setSelectedCandidateId }) {
                 </thead>
                 <tbody>
                   {pendingReviews.slice(0, 5).map((rev) => {
-                    const score = rev.panel_decision?.merged_score || 85.0;
+                    const score = rev.panel_decision?.merged_score;
+                    const jobTitle = jobs.find(j => j.jd_id === rev.target_jd_id)?.title || rev.target_jd_id || "Unassigned";
                     return (
                       <tr key={rev.candidate_id}>
                         <td style={{ fontWeight: "600" }}>{rev.name}</td>
-                        <td style={{ color: "#94a3b8" }}>{rev.target_jd_id || "Engineering"}</td>
+                        <td style={{ color: "#94a3b8" }}>{jobTitle}</td>
                         <td>
-                          <span style={{ fontWeight: "600", color: score >= 80 ? "#34d399" : "#fbbf24" }}>
-                            {score.toFixed(1)}
-                          </span>
+                          {score != null ? (
+                            <span style={{ fontWeight: "600", color: score >= 80 ? "#34d399" : "#fbbf24" }}>
+                              {score.toFixed(1)}
+                            </span>
+                          ) : (
+                            <span style={{ color: "#64748b" }}>—</span>
+                          )}
                         </td>
                         <td>
                           <span className="badge badge-warning">Review Pending</span>

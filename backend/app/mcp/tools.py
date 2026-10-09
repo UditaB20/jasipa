@@ -6,6 +6,30 @@ from app.database.models import (
     PanelDecision, BiasCheck, HumanReview, AuditLog
 )
 
+STAGE_RANKS = {
+    "APPLIED": 1,
+    "MANUAL_REVIEW_REQUIRED": 1,
+    "RESUME_SCREENED": 2,
+    "TECHNICAL_ASSESSED": 3,
+    "BEHAVIORAL_ASSESSED": 4,
+    "PANEL_EVALUATED": 5,
+    "BIAS_CHECKED": 6,
+    "HUMAN_REVIEW_PENDING": 6,
+    "DECIDED": 7
+}
+
+def advance_stage_if_higher(candidate: Candidate, target_stage: str):
+    """
+    Finite-State Machine guard: Ensures the pipeline can only advance forward.
+    Prevents re-evaluations from overwriting higher or terminal (DECIDED) stages.
+    """
+    if not candidate or candidate.current_stage == "DECIDED":
+        return
+    current_rank = STAGE_RANKS.get(candidate.current_stage, 0)
+    target_rank = STAGE_RANKS.get(target_stage, 0)
+    if target_rank > current_rank:
+        candidate.current_stage = target_stage
+
 class ATSTools:
     """
     Standard Model Context Protocol (MCP) ATS Tool layer.
@@ -85,10 +109,10 @@ class ATSTools:
         )
         db.add(result)
         
-        # Advance pipeline stage
+        # Advance pipeline stage safely via FSM
         cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
         if cand:
-            cand.current_stage = "RESUME_SCREENED"
+            advance_stage_if_higher(cand, "RESUME_SCREENED")
             
         db.commit()
         db.refresh(result)
@@ -128,13 +152,13 @@ class ATSTools:
         )
         db.add(assessment)
         
-        # Update stage
+        # Update stage safely via FSM
         cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
         if cand:
             if test_type == "TECHNICAL":
-                cand.current_stage = "TECHNICAL_ASSESSED"
+                advance_stage_if_higher(cand, "TECHNICAL_ASSESSED")
             elif test_type == "BEHAVIORAL":
-                cand.current_stage = "BEHAVIORAL_ASSESSED"
+                advance_stage_if_higher(cand, "BEHAVIORAL_ASSESSED")
                 
         db.commit()
         db.refresh(assessment)
@@ -164,6 +188,7 @@ class ATSTools:
         decision_factors: Optional[List[str]] = None,
         highlighted_concerns: Optional[List[str]] = None,
         highlighted_strengths: Optional[List[str]] = None,
+        requires_four_eyes_review: bool = False,
         used_llm_synthesis: bool = False,
         synthesis_latency_ms: int = 0,
         synthesis_strategy: str = "template",
@@ -186,6 +211,7 @@ class ATSTools:
             decision_factors=decision_factors or [],
             highlighted_concerns=highlighted_concerns or [],
             highlighted_strengths=highlighted_strengths or [],
+            requires_four_eyes_review=requires_four_eyes_review,
             used_llm_synthesis=used_llm_synthesis,
             synthesis_latency_ms=synthesis_latency_ms,
             synthesis_strategy=synthesis_strategy,
@@ -195,7 +221,7 @@ class ATSTools:
         
         cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
         if cand:
-            cand.current_stage = "PANEL_EVALUATED"
+            advance_stage_if_higher(cand, "PANEL_EVALUATED")
             
         db.commit()
         db.refresh(decision)
@@ -227,7 +253,7 @@ class ATSTools:
         
         cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
         if cand:
-            cand.current_stage = "HUMAN_REVIEW_PENDING"
+            advance_stage_if_higher(cand, "HUMAN_REVIEW_PENDING")
             
         db.commit()
         db.refresh(bias)
@@ -244,10 +270,14 @@ class ATSTools:
         reviewer_id: str,
         reviewer_name: str,
         decision: str,
-        notes: str
+        notes: str,
+        decision_id: Optional[str] = None,
+        bias_check_id: Optional[str] = None
     ) -> Dict[str, Any]:
         review = HumanReview(
             candidate_id=candidate_id,
+            decision_id=decision_id,
+            bias_check_id=bias_check_id,
             reviewer_id=reviewer_id,
             reviewer_name=reviewer_name,
             decision=decision,
@@ -265,6 +295,8 @@ class ATSTools:
         return {
             "review_id": review.review_id,
             "candidate_id": candidate_id,
+            "decision_id": decision_id,
+            "bias_check_id": bias_check_id,
             "decision": decision,
             "reviewer": reviewer_name
         }

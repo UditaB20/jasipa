@@ -36,8 +36,11 @@ export const login = (email, password) =>
 export const getJobs = () => fetchApi("/jobs/");
 export const getJob = (id) => fetchApi(`/jobs/${id}`);
 export const getJobRubric = (id) => fetchApi(`/jobs/${id}/rubric`);
+export const updateJobRubric = (id, data) => 
+  fetchApi(`/jobs/${id}/rubric`, { method: "PUT", body: JSON.stringify(data) });
 export const createJob = (data) => 
   fetchApi("/jobs/", { method: "POST", body: JSON.stringify(data) });
+
 
 // Candidate APIs (HR View)
 export const getCandidates = (stage, jd_id) => {
@@ -97,6 +100,7 @@ export const getHiringOutcomeHistory = () => fetchApi("/learning/history");
 // Audit & MCP APIs (HR / System)
 export const getCandidateAuditTrail = (id) => fetchApi(`/audit/candidate/${id}`);
 export const getRecentAuditLogs = (limit = 30) => fetchApi(`/audit/logs?limit=${limit}`);
+export const verifyAuditHashChain = () => fetchApi("/audit/verify");
 export const getMcpTools = () => fetchApi("/mcp/tools");
 export const executeMcpTool = (name, argumentsObj) => 
   fetchApi("/mcp/execute", { method: "POST", body: JSON.stringify({ name, arguments: argumentsObj }) });
@@ -113,6 +117,8 @@ export const submitCandidateTechnical = (data) =>
 export const submitCandidateBehavioral = (data) => 
   fetchApi("/candidate/submit-behavioral", { method: "POST", body: JSON.stringify(data) });
 export const getCandidateTimeline = () => fetchApi("/candidate/timeline");
+export const getCandidateExplanation = () => fetchApi("/candidate/explanation");
+export const requestCandidateReReview = () => fetchApi("/candidate/request-re-review", { method: "POST" });
 export const updateCandidateProfile = (data) => 
   fetchApi("/candidate/profile", { method: "PUT", body: JSON.stringify(data) });
 export const updateHRProfile = (data) => 
@@ -135,3 +141,13 @@ export const uploadCandidateResume = async (file) => {
   }
   return await res.json();
 };
+
+// Audit Trail & Cryptographic Verification APIs
+export const getAuditLogs = (candidateId = null, limit = 100) => {
+  const q = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}&limit=${limit}` : `?limit=${limit}`;
+  return fetchApi(`/audit/logs${q}`);
+};
+
+export const verifyAuditChain = () => fetchApi("/audit/verify");
+export const getCandidateAuditTimeline = (candidateId) => fetchApi(`/audit/candidate/${candidateId}`);
+

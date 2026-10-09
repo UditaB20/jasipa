@@ -8,10 +8,15 @@ class HumanReviewCreate(BaseModel):
     reviewer_name: str = "Lead Talent Reviewer"
     decision: str # "APPROVE", "REJECT", "REQUEST_MORE_INFORMATION"
     notes: str
+    decision_id: Optional[str] = None
+    bias_check_id: Optional[str] = None
 
 class HumanReviewResponse(HumanReviewCreate):
     review_id: str
     timestamp: datetime
+    decision_id: Optional[str] = None
+    bias_check_id: Optional[str] = None
 
     class Config:
         from_attributes = True
+

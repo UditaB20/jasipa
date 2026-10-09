@@ -125,7 +125,7 @@ def require_role(allowed_roles: list[str]):
 
 def require_hr(current_user: Dict = Depends(get_current_user)):
     """Enforces that the authenticated user is an HR member."""
-    if current_user["role"] != "HR":
+    if current_user.get("role", "").upper() != "HR":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access restricted to HR personnel only."
@@ -134,7 +134,7 @@ def require_hr(current_user: Dict = Depends(get_current_user)):
 
 def require_candidate(current_user: Dict = Depends(get_current_user)):
     """Enforces that the authenticated user is a Candidate with a valid candidate_id."""
-    if current_user["role"] != "CANDIDATE":
+    if current_user.get("role", "").upper() != "CANDIDATE":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access restricted to candidate portal."

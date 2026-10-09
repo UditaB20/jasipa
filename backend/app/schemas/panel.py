@@ -19,6 +19,7 @@ class PanelDecisionOutput(BaseModel):
     decision_factors: List[str] = []
     highlighted_concerns: List[str] = []
     highlighted_strengths: List[str] = []
+    requires_four_eyes_review: bool = False
     used_llm_synthesis: bool = False
     synthesis_latency_ms: int = 0
     synthesis_strategy: str = "template"

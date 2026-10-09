@@ -50,6 +50,29 @@ metric_columns = {column["name"] for column in inspect(engine).get_columns("stra
 if "fallback_level" not in metric_columns:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE strategy_metrics ADD COLUMN fallback_level INTEGER NOT NULL DEFAULT 0"))
+review_columns = {column["name"] for column in inspect(engine).get_columns("human_reviews")}
+if "decision_id" not in review_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE human_reviews ADD COLUMN decision_id VARCHAR"))
+if "bias_check_id" not in review_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE human_reviews ADD COLUMN bias_check_id VARCHAR"))
+audit_columns = {column["name"] for column in inspect(engine).get_columns("audit_logs")}
+if "prev_hash" not in audit_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE audit_logs ADD COLUMN prev_hash VARCHAR"))
+if "entry_hash" not in audit_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE audit_logs ADD COLUMN entry_hash VARCHAR"))
+if "model_name" not in audit_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE audit_logs ADD COLUMN model_name VARCHAR DEFAULT 'gemini-2.5-flash'"))
+if "prompt_version" not in audit_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE audit_logs ADD COLUMN prompt_version VARCHAR DEFAULT 'v2.1'"))
+if "requires_four_eyes_review" not in panel_columns:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE panel_decisions ADD COLUMN requires_four_eyes_review BOOLEAN DEFAULT 0"))
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

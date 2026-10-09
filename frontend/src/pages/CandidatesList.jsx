@@ -1,27 +1,17 @@
 import React, { useState, useEffect } from "react";
-import { Users, Upload, Search, Filter, Play, ArrowRight, FileText, CheckCircle2 } from "lucide-react";
-import { getCandidates, getJobs, uploadResume, createCandidate } from "../services/api";
+import { Search, ArrowRight } from "lucide-react";
+import { getCandidates, getJobs } from "../services/api";
 import StageBadge from "../components/StageBadge";
 
+// Resumes enter the system via the Candidate Portal (candidate applies) or scripts/import_dataset.py.
+// HR intentionally has no upload path here.
 export default function CandidatesList({ setActivePage, setSelectedCandidateId }) {
   const [candidates, setCandidates] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [stageFilter, setStageFilter] = useState("");
   const [jdFilter, setJdFilter] = useState("");
-  const [showUploadModal, setShowUploadModal] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  // Resume Upload Form State
-  const [uploadData, setUploadData] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    cohort_tag: "Cohort_Alpha",
-    target_jd_id: "",
-    file: null,
-  });
-  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -35,41 +25,10 @@ export default function CandidatesList({ setActivePage, setSelectedCandidateId }
       ]);
       setCandidates(cands);
       setJobs(jbList);
-      if (jbList.length > 0 && !uploadData.target_jd_id) {
-        setUploadData(prev => ({ ...prev, target_jd_id: jbList[0].jd_id }));
-      }
     } catch (err) {
       console.error("Error loading candidate list:", err);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleUploadResume(e) {
-    e.preventDefault();
-    if (!uploadData.file) {
-      alert("Please select a PDF resume file.");
-      return;
-    }
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("name", uploadData.name);
-      formData.append("email", uploadData.email);
-      formData.append("phone", uploadData.phone || "");
-      formData.append("cohort_tag", uploadData.cohort_tag || "General Cohort");
-      formData.append("target_jd_id", uploadData.target_jd_id);
-      formData.append("file", uploadData.file);
-
-      const res = await uploadResume(formData);
-      setShowUploadModal(false);
-      await loadData();
-      setSelectedCandidateId(res.candidate_id);
-      setActivePage("candidate-detail");
-    } catch (err) {
-      alert("Upload error: " + err.message);
-    } finally {
-      setUploading(false);
     }
   }
 
@@ -89,18 +48,9 @@ export default function CandidatesList({ setActivePage, setSelectedCandidateId }
             Candidate Pipeline & Dossiers
           </h2>
           <p style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
-            Manage candidate profiles, view multi-agent evaluation statuses, and upload PDF resumes for automated parsing.
+            Manage candidate profiles and view multi-agent evaluation statuses. Candidates apply via the Candidate Portal.
           </p>
         </div>
-
-        <button
-          onClick={() => setShowUploadModal(true)}
-          className="btn btn-primary"
-          style={{ padding: "10px 18px" }}
-        >
-          <Upload size={16} />
-          <span>Upload PDF Resume</span>
-        </button>
       </div>
 
       {/* Filter and Search Bar */}
@@ -228,114 +178,6 @@ export default function CandidatesList({ setActivePage, setSelectedCandidateId }
           </tbody>
         </table>
       </div>
-
-      {/* PDF Resume Upload Modal */}
-      {showUploadModal && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.75)",
-            backdropFilter: "blur(6px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-          }}
-        >
-          <div className="glass-card" style={{ width: "560px", padding: "28px" }}>
-            <h3 style={{ fontSize: "1.2rem", fontWeight: "800", color: "#f8fafc", marginBottom: "14px" }}>
-              Upload Candidate Resume (PyMuPDF Parser)
-            </h3>
-            <p style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "18px" }}>
-              The backend will extract plain text, calculate extraction confidence, and extract preliminary metadata.
-            </p>
-
-            <form onSubmit={handleUploadResume} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div>
-                <label style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: "600" }}>Candidate Name</label>
-                <input
-                  className="form-input"
-                  required
-                  placeholder="e.g. Maya Lin"
-                  value={uploadData.name}
-                  onChange={(e) => setUploadData({ ...uploadData, name: e.target.value })}
-                />
-              </div>
-
-              <div>
-                <label style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: "600" }}>Email Address</label>
-                <input
-                  type="email"
-                  className="form-input"
-                  required
-                  placeholder="maya.lin@example.com"
-                  value={uploadData.email}
-                  onChange={(e) => setUploadData({ ...uploadData, email: e.target.value })}
-                />
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div>
-                  <label style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: "600" }}>Cohort Tag</label>
-                  <select
-                    className="form-select"
-                    value={uploadData.cohort_tag}
-                    onChange={(e) => setUploadData({ ...uploadData, cohort_tag: e.target.value })}
-                  >
-                    <option value="Cohort_Alpha">Cohort_Alpha</option>
-                    <option value="Cohort_Beta">Cohort_Beta</option>
-                    <option value="Cohort_Gamma">Cohort_Gamma</option>
-                    <option value="General Cohort">General Cohort</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: "600" }}>Target Job Description</label>
-                  <select
-                    className="form-select"
-                    value={uploadData.target_jd_id}
-                    onChange={(e) => setUploadData({ ...uploadData, target_jd_id: e.target.value })}
-                  >
-                    {jobs.map(j => (
-                      <option key={j.jd_id} value={j.jd_id}>{j.title}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: "600" }}>Select PDF Resume File</label>
-                <input
-                  type="file"
-                  accept=".pdf"
-                  required
-                  className="form-input"
-                  style={{ padding: "8px" }}
-                  onChange={(e) => setUploadData({ ...uploadData, file: e.target.files[0] })}
-                />
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" }}>
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(false)}
-                  className="btn btn-secondary"
-                  disabled={uploading}
-                >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={uploading}>
-                  {uploading ? "Extracting & Ingesting..." : "Parse & Ingest Resume"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

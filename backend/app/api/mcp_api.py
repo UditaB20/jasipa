@@ -4,6 +4,7 @@ from typing import Dict, Any, List
 from pydantic import BaseModel
 from app.database.session import get_db
 from app.mcp.server import MCPServer
+from app.auth.security import require_hr
 
 router = APIRouter(prefix="/mcp", tags=["Model Context Protocol (MCP) ATS Connector"])
 
@@ -12,7 +13,7 @@ class ToolCallRequest(BaseModel):
     arguments: Dict[str, Any]
 
 @router.get("/tools")
-def list_mcp_tools():
+def list_mcp_tools(current_user: dict = Depends(require_hr)):
     """
     Returns JSON Schema of all MCP ATS tools exposed by the JASIPA server.
     """
@@ -22,7 +23,11 @@ def list_mcp_tools():
     }
 
 @router.post("/execute")
-def execute_mcp_tool(req: ToolCallRequest, db: Session = Depends(get_db)):
+def execute_mcp_tool(
+    req: ToolCallRequest, 
+    current_user: dict = Depends(require_hr), 
+    db: Session = Depends(get_db)
+):
     """
     Directly invokes an ATS MCP tool with structured arguments.
     """

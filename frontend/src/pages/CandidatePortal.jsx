@@ -16,7 +16,8 @@ import {
   Save,
   X,
   Upload,
-  FileUp
+  FileUp,
+  ShieldCheck
 } from "lucide-react";
 import { 
   getCandidateProfile, 
@@ -27,6 +28,8 @@ import {
   submitCandidateTechnical, 
   submitCandidateBehavioral, 
   getCandidateTimeline,
+  getCandidateExplanation,
+  requestCandidateReReview,
   updateCandidateProfile,
   uploadCandidateResume
 } from "../services/api";
@@ -72,6 +75,11 @@ export default function CandidatePortal({ currentUser, onLogout }) {
   const [resumeUploading, setResumeUploading] = useState(false);
   const [resumeUploadMsg, setResumeUploadMsg] = useState(null);
   const resumeFileRef = useRef(null);
+
+  // Transparency & Rights state (NYC LL 144 / EU AI Act)
+  const [explanationData, setExplanationData] = useState(null);
+  const [reReviewLoading, setReReviewLoading] = useState(false);
+  const [reReviewMsg, setReReviewMsg] = useState(null);
 
 
   const startEditProfile = () => {
@@ -198,7 +206,7 @@ export default function CandidatePortal({ currentUser, onLogout }) {
         answer_text: ans
       }));
       const res = await submitCandidateTechnical({ answers: answersList });
-      setTechDoneMsg(`Technical assessment submitted! Score: ${res.score}/100`);
+      setTechDoneMsg("Technical assessment submitted successfully!");
       loadCandidateData();
     } catch (err) {
       alert("Failed to submit technical answers: " + err.message);
@@ -216,12 +224,33 @@ export default function CandidatePortal({ currentUser, onLogout }) {
         answer_text: ans
       }));
       const res = await submitCandidateBehavioral({ answers: answersList });
-      setBehDoneMsg(`Behavioral assessment submitted! Score: ${res.score}/100`);
+      setBehDoneMsg("Behavioral assessment submitted successfully!");
       loadCandidateData();
     } catch (err) {
       alert("Failed to submit behavioral answers: " + err.message);
     } finally {
       setBehSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "rights" && !explanationData) {
+      getCandidateExplanation()
+        .then(setExplanationData)
+        .catch(err => console.error("Failed to load explanation:", err));
+    }
+  }, [activeTab, explanationData]);
+
+  const handleRequestReReview = async () => {
+    setReReviewLoading(true);
+    setReReviewMsg(null);
+    try {
+      const res = await requestCandidateReReview();
+      setReReviewMsg(res.message);
+    } catch (err) {
+      setReReviewMsg("Request failed: " + err.message);
+    } finally {
+      setReReviewLoading(false);
     }
   };
 
@@ -254,6 +283,7 @@ export default function CandidatePortal({ currentUser, onLogout }) {
             { id: "jobs", label: "Browse Jobs", icon: Briefcase },
             { id: "applications", label: "My Applications", icon: Clock },
             { id: "assessments", label: "Assessments", icon: Code },
+            { id: "rights", label: "Transparency & Rights", icon: ShieldCheck },
             { id: "profile", label: "My Profile", icon: User },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -606,7 +636,7 @@ export default function CandidatePortal({ currentUser, onLogout }) {
                 </div>
                 {assessmentsData?.technical?.completed ? (
                   <span className="badge badge-success">
-                    Completed (Score: {assessmentsData.technical.score}/100)
+                    Submitted & Under Review
                   </span>
                 ) : (
                   <span className="badge badge-warning">Pending Submission</span>
@@ -634,12 +664,12 @@ export default function CandidatePortal({ currentUser, onLogout }) {
                   </div>
 
                   <button type="submit" className="btn btn-primary" disabled={techSubmitting}>
-                    {techSubmitting ? "Evaluating with Skill-Assessor..." : "Submit Technical Assessment"}
+                    {techSubmitting ? "Submitting..." : "Submit Technical Assessment"}
                   </button>
                 </form>
               ) : (
                 <p style={{ color: "#64748b", fontSize: "0.85rem" }}>
-                  Your technical assessment responses have been scored and logged in the panel dossier.
+                  Your technical assessment responses have been received and logged for panel review.
                 </p>
               )}
             </div>
@@ -652,12 +682,12 @@ export default function CandidatePortal({ currentUser, onLogout }) {
                     Part 2: Behavioral Assessment (STAR Method)
                   </h3>
                   <p style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Evaluated by the Culture-Fit Agent for Communication, Teamwork, Problem-Solving, and Adaptability.
+                    Evaluated for Communication, Teamwork, Problem-Solving, and Adaptability.
                   </p>
                 </div>
                 {assessmentsData?.behavioral?.completed ? (
                   <span className="badge badge-success">
-                    Completed (Score: {assessmentsData.behavioral.score}/100)
+                    Submitted & Under Review
                   </span>
                 ) : (
                   <span className="badge badge-warning">Pending Submission</span>
@@ -685,12 +715,12 @@ export default function CandidatePortal({ currentUser, onLogout }) {
                   </div>
 
                   <button type="submit" className="btn btn-primary" disabled={behSubmitting}>
-                    {behSubmitting ? "Evaluating with Culture-Fit Agent..." : "Submit Behavioral Assessment"}
+                    {behSubmitting ? "Submitting..." : "Submit Behavioral Assessment"}
                   </button>
                 </form>
               ) : (
                 <p style={{ color: "#64748b", fontSize: "0.85rem" }}>
-                  Your behavioral answers have been evaluated and recorded.
+                  Your behavioral answers have been received and logged for panel review.
                 </p>
               )}
             </div>
@@ -881,6 +911,113 @@ export default function CandidatePortal({ currentUser, onLogout }) {
           </div>
         )}
 
+        {/* TAB: TRANSPARENCY & RIGHTS (NYC LL 144 / EU AI ACT) */}
+        {activeTab === "rights" && (
+          <div>
+            <div style={{ marginBottom: "24px" }}>
+              <h2 className="page-title">AI Governance & Candidate Rights</h2>
+              <p className="page-subtitle">
+                Transparent disclosure under NYC Local Law 144 and EU AI Act Article 14 regarding how Automated Employment Decision Tools (AEDT) assist your evaluation.
+              </p>
+            </div>
+
+            {reReviewMsg && (
+              <div style={{
+                background: "rgba(16, 185, 129, 0.15)",
+                border: "1px solid rgba(16, 185, 129, 0.4)",
+                color: "#34d399",
+                padding: "14px 18px",
+                borderRadius: "8px",
+                marginBottom: "24px",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px"
+              }}>
+                <CheckCircle2 size={20} />
+                <span style={{ fontSize: "0.85rem", fontWeight: "600" }}>{reReviewMsg}</span>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+              {/* Guarantee 1: Strict Non-Autonomous Policy */}
+              <div className="glass-card" style={{ padding: "20px", borderLeft: "4px solid #10b981" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "1.2rem" }}>⚖️</span>
+                  <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
+                    Core Governance Guarantee: Autonomous Decisions Strictly Prohibited
+                  </h3>
+                </div>
+                <p style={{ fontSize: "0.82rem", color: "#cbd5e1", lineHeight: 1.6 }}>
+                  JASIPA employs specialized multi-agent AI for structured qualification analysis; however, under our mandatory human-in-the-loop charter, 
+                  <strong> AI is strictly prohibited from autonomously rejecting or hiring any applicant</strong>. Every recommendation dossier is reviewed, inspected, and finalized by a verified human HR talent partner.
+                </p>
+              </div>
+
+              {/* Guarantee 2: Blind Screening & Data Minimization */}
+              <div className="glass-card" style={{ padding: "20px", borderLeft: "4px solid #38bdf8" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "1.2rem" }}>👁️</span>
+                  <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
+                    Blind Screening & PII Minimization Active
+                  </h3>
+                </div>
+                <p style={{ fontSize: "0.82rem", color: "#cbd5e1", lineHeight: 1.6 }}>
+                  To prevent demographic and pedigree bias, our system executes an automated redaction pass before AI evaluation models receive your profile. Direct contact identifiers (email address, phone numbers, and external portfolio links) are masked to ensure evaluation is anchored purely to demonstrable skills and requirements.
+                </p>
+              </div>
+
+              {/* Guarantee 3: JD-Anchored Scoring Rubric */}
+              <div className="glass-card" style={{ padding: "20px" }}>
+                <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "12px" }}>
+                  Transparent Scoring Rubric Weights
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Resume Qualification</div>
+                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#38bdf8" }}>40%</div>
+                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
+                      Explicit verification of required skills and years of relevant domain experience.
+                    </div>
+                  </div>
+                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Technical Assessment</div>
+                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#a855f7" }}>40%</div>
+                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
+                      Practical problem-solving, algorithmic reasoning, and domain exercises.
+                    </div>
+                  </div>
+                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Behavioral Alignment</div>
+                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#10b981" }}>20%</div>
+                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
+                      STAR-structured assessment of stakeholder communication, adaptability, and teamwork.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Guarantee 4: Right to Appeal & Re-Review */}
+              <div className="glass-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(30, 41, 59, 0.6)" }}>
+                <div>
+                  <h3 style={{ fontSize: "0.95rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
+                    Right to Independent Human Re-Review (NYC LL 144)
+                  </h3>
+                  <p style={{ fontSize: "0.78rem", color: "#94a3b8", margin: "4px 0 0 0" }}>
+                    If you believe your profile or assessments were misunderstood, you have the statutory right to request an independent re-review by a senior HR lead.
+                  </p>
+                </div>
+                <button
+                  onClick={handleRequestReReview}
+                  disabled={reReviewLoading}
+                  className="btn btn-secondary"
+                  style={{ flexShrink: 0, padding: "8px 16px", border: "1px solid rgba(56, 189, 248, 0.4)" }}
+                >
+                  {reReviewLoading ? "Logging Request..." : "Request Human Re-Review"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

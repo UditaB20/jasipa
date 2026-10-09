@@ -7,9 +7,12 @@ class BiasCheckerAgent:
     """
     Evaluates historical cohort statistics and candidate outcomes against the 4/5ths (80%) disparate impact standard.
     
-    Governance Rule:
-    A bias flag NEVER automatically rejects or modifies candidate data. It generates an audit warning
-    and explanation for the Human Reviewer.
+    ARCHITECTURE:
+    - Bias Flag Impact: A bias flag is recorded for transparency and auditing, but NEVER modifies
+      the candidate recommendation, scores, or decisions. All candidates route to human review.
+    - Tool Use: This agent does NOT call MCP tools directly. It returns BiasCheckOutput.
+      The LangGraph bias_node calls ATSTools.save_bias_check() after evaluation completes.
+    - Deterministic Evaluation: Runs statistical 4/5ths cohort ratio calculations without LLM dependency.
     """
 
     @staticmethod

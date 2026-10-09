@@ -10,8 +10,13 @@ class PanelCoordinatorAgent:
     Synthesizes independent evaluations from Resume Screener, Skill Assessor, and Culture-Fit agents.
     Calculates rubric-weighted merged score and identifies strengths, gaps, and perspective divergences.
     
-    Governance Rule:
-    The AI must NEVER autonomously reject or hire. Recommendations route to human review.
+    ARCHITECTURE:
+    - Deterministic Execution: Pure Python weighted merge algorithm with zero LLM dependency.
+      Guarantees exact mathematical repeatability and full auditability without stochastic variance.
+    - Tool Use: This agent does NOT call MCP tools directly. It returns PanelDecisionOutput.
+      The LangGraph panel_node calls ATSTools.save_panel_decision() after synthesis completes.
+    - Governance Rule:
+      The AI must NEVER autonomously reject or hire. All recommendations route to human review.
     """
 
     @staticmethod
@@ -87,6 +92,13 @@ class PanelCoordinatorAgent:
 
         # 5. Deterministic routing: explanation generation cannot change this result.
         major_divergence = score_spread >= 30
+        requires_four_eyes = major_divergence or (technical.confidence is not None and technical.confidence < 0.60)
+        if requires_four_eyes:
+            disagreements.append(
+                f"Four-Eyes Governance Escalation: Inter-agent score divergence of {score_spread} points (>=30) detected. "
+                "Dual independent human review sign-offs required prior to final disposition."
+            )
+
         if has_insufficient_evidence:
             recommendation = "ADDITIONAL_INFORMATION_REQUIRED"
         elif merged_score < 50:
@@ -122,7 +134,10 @@ class PanelCoordinatorAgent:
             system_prompt=("You write evidence-grounded evaluation summaries for human review. Never hire or reject candidates. "
                            "Return JSON with summary (string), decision_factors (string list), highlighted_concerns (string list), "
                            "and highlighted_strengths (string list)."),
-            user_prompt=prompt, required_keys=("summary",), model_name=panel_coordinator_config.llm_synthesis_model)
+            user_prompt=prompt, required_keys=("summary",), model_name=panel_coordinator_config.llm_synthesis_model,
+            # Structured facts consumed by TemplateSynthesisStrategy (previously omitted -> summaries showed 0/100).
+            merged_score=merged_score, resume_score=r_score, skill_score=s_score, culture_score=c_score,
+            strengths=strengths, gaps=gaps, disagreements=disagreements, recommendation=recommendation)
         synthesis_data = synthesis["data"]
         synthesis_error = next((a["error"] for a in synthesis["attempts"] if not a["success"]), None)
 
@@ -143,6 +158,7 @@ class PanelCoordinatorAgent:
             decision_factors=synthesis_data.get("decision_factors", []),
             highlighted_concerns=synthesis_data.get("highlighted_concerns", final_gaps),
             highlighted_strengths=synthesis_data.get("highlighted_strengths", final_strengths),
+            requires_four_eyes_review=requires_four_eyes,
             used_llm_synthesis=synthesis["successful_strategy"] == "llm",
             synthesis_latency_ms=synthesis["total_latency_ms"],
             synthesis_strategy=synthesis["successful_strategy"] or "none",

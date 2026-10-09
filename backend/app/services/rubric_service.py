@@ -58,8 +58,9 @@ def generate_rubric_for_jd(jd: JobDescription, version: str = "1.0") -> Dict[str
             "required_skills_breakdown": skill_points,
             "preferred_skills_weight": 15,
             "preferred_skills_breakdown": preferred_points,
-            "experience_threshold_years": jd.min_experience or 2.0,
+            "experience_threshold_years": int(jd.min_experience if jd.min_experience is not None else 2),
             "experience_weight": 20,
+
             "education_and_projects_weight": 15
         },
         "technical_scoring": {

@@ -16,7 +16,7 @@ export default function Sidebar({ activePage, setActivePage, pendingReviewCount 
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "jobs", label: "Jobs", icon: Briefcase },
     { id: "candidates", label: "Candidates", icon: Users },
-    { id: "assessments", label: "Assessments", icon: Code2 },
+    { id: "assessments", label: "Assessment Submissions", icon: Code2 },
     { 
       id: "reviews", 
       label: "Human Reviews", 

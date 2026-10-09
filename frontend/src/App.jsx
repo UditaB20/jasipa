@@ -12,17 +12,12 @@ import SettingsPage from "./pages/SettingsPage";
 import CandidatePortal from "./pages/CandidatePortal";
 import LoginPage from "./pages/LoginPage";
 import LearningPage from "./pages/LearningPage";
+import AuditLogs from "./pages/AuditLogs";
 import { getPendingReviews } from "./services/api";
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem("user");
-      return saved ? JSON.parse(saved) : null;
-    } catch {
-      return null;
-    }
-  });
+  // Always display the Login Page first when opening the application
+  const [currentUser, setCurrentUser] = useState(null);
 
   const [activePage, setActivePage] = useState("dashboard");
   const [selectedCandidateId, setSelectedCandidateId] = useState("CAND-001-ELENA");
@@ -126,7 +121,7 @@ export default function App() {
 
           {activePage === "reviews" && (
             <HumanReviewPage
-              currentRole="HR"
+              currentUser={currentUser}
               selectedCandidateId={selectedCandidateId}
               setSelectedCandidateId={setSelectedCandidateId}
             />
@@ -136,8 +131,7 @@ export default function App() {
           {activePage === "learning" && <LearningPage currentUser={currentUser} />}
 
           {activePage === "audit" && (
-            <CandidateDetail
-              candidateId={selectedCandidateId}
+            <AuditLogs
               setActivePage={setActivePage}
               setSelectedCandidateId={setSelectedCandidateId}
             />

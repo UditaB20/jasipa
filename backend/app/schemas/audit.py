@@ -10,10 +10,16 @@ class AuditLogCreate(BaseModel):
     input_reference: Optional[Dict[str, Any]] = {}
     output: Optional[Dict[str, Any]] = {}
     rubric_version: Optional[str] = None
+    model_name: Optional[str] = "gemini-2.5-flash"
+    prompt_version: Optional[str] = "v2.1"
+    prev_hash: Optional[str] = None
+    entry_hash: Optional[str] = None
 
 class AuditLogResponse(AuditLogCreate):
     log_id: str
     timestamp: datetime
+    prev_hash: Optional[str] = None
+    entry_hash: Optional[str] = None
 
     class Config:
         from_attributes = True

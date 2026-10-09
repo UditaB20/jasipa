@@ -6,7 +6,7 @@ import ScoreRadar from "../components/ScoreRadar";
 import BiasAlertBanner from "../components/BiasAlertBanner";
 import AuditTimeline from "../components/AuditTimeline";
 
-export default function HumanReviewPage({ currentRole, selectedCandidateId, setSelectedCandidateId }) {
+export default function HumanReviewPage({ currentUser, selectedCandidateId, setSelectedCandidateId }) {
   const [pendingReviews, setPendingReviews] = useState([]);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [decisionNotes, setDecisionNotes] = useState("");
@@ -51,10 +51,11 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
 
     setSubmitting(true);
     try {
+      // Reviewer identity is taken from the authenticated JWT on the backend.
       const res = await submitHumanDecision({
         candidate_id: selectedCandidate.candidate_id,
-        reviewer_id: currentRole === "REVIEWER" ? "USR_REV_01" : "USR_REC_01",
-        reviewer_name: currentRole === "REVIEWER" ? "Dr. Alex HumanReviewer" : "Sarah Recruiter",
+        reviewer_id: currentUser?.email || "HR_REVIEWER",
+        reviewer_name: currentUser?.name || "HR Reviewer",
         decision: decisionType,
         notes: decisionNotes
       });
@@ -73,11 +74,12 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
     }
   }
 
-  const latestPanel = selectedCandidate?.panel_decisions?.[selectedCandidate.panel_decisions.length - 1];
-  const latestBias = selectedCandidate?.bias_checks?.[selectedCandidate.bias_checks.length - 1];
-  const latestScreening = selectedCandidate?.screening_results?.[selectedCandidate.screening_results.length - 1];
-  const techAssessment = selectedCandidate?.assessments?.find(a => a.test_type === "TECHNICAL");
-  const behAssessment = selectedCandidate?.assessments?.find(a => a.test_type === "BEHAVIORAL");
+  // Child collections are ordered oldest -> newest by the backend, so the last element is the latest.
+  const latestPanel = selectedCandidate?.panel_decisions?.at(-1);
+  const latestBias = selectedCandidate?.bias_checks?.at(-1);
+  const pendingEntry = pendingReviews.find(p => p.candidate_id === selectedCandidate?.candidate_id);
+  const confidence = pendingEntry?.confidence;
+  const history = pendingEntry?.historical_context;
 
   return (
     <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
@@ -92,7 +94,7 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
         </div>
 
         <div style={{ padding: "6px 14px", borderRadius: "8px", background: "rgba(245, 158, 11, 0.15)", border: "1px solid rgba(245, 158, 11, 0.4)", color: "#fbbf24", fontSize: "0.78rem", fontWeight: "700" }}>
-          Active Human Reviewer: {currentRole === "REVIEWER" ? "Dr. Alex (Reviewer)" : "Sarah (HR Admin)"}
+          Active Human Reviewer: {currentUser?.name || "HR Admin"}
         </div>
       </div>
 
@@ -131,11 +133,26 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <h4 style={{ fontSize: "0.85rem", fontWeight: "700", color: "#f8fafc" }}>
-                        {p.name}
-                      </h4>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <h4 style={{ fontSize: "0.85rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
+                          {p.name}
+                        </h4>
+                        {p.is_appeal && (
+                          <span style={{
+                            fontSize: "0.65rem",
+                            padding: "1px 5px",
+                            borderRadius: "4px",
+                            background: "rgba(236, 72, 153, 0.2)",
+                            border: "1px solid #ec4899",
+                            color: "#f472b6",
+                            fontWeight: "700"
+                          }}>
+                            ⚖️ APPEAL
+                          </span>
+                        )}
+                      </div>
                       <span style={{ fontSize: "0.7rem", color: "#fbbf24", fontWeight: "700" }}>
-                        {p.panel_decision?.merged_score || "N/A"}/100
+                        {p.panel_decision?.merged_score != null ? `${p.panel_decision.merged_score}/100` : "N/A"}
                       </span>
                     </div>
                     <p style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "2px" }}>
@@ -171,24 +188,74 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
               </div>
             </div>
 
+            {/* Candidate Rights Appeal Banner (NYC LL 144 / EU AI Act) */}
+            {pendingEntry?.is_appeal && (
+              <div
+                style={{
+                  background: "rgba(236, 72, 153, 0.12)",
+                  border: "1px solid rgba(236, 72, 153, 0.5)",
+                  borderRadius: "8px",
+                  padding: "14px 18px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "14px",
+                }}
+              >
+                <span style={{ fontSize: "1.6rem" }}>⚖️</span>
+                <div>
+                  <h4 style={{ color: "#f472b6", margin: 0, fontSize: "0.95rem", fontWeight: "700" }}>
+                    NYC Local Law 144 / EU AI Act Candidate Rights Appeal
+                  </h4>
+                  <p style={{ color: "#fbcfe8", margin: "3px 0 0 0", fontSize: "0.8rem" }}>
+                    The candidate has formally contested automated screening and requested an expedited, independent human re-examination. Full audit history is logged below.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Bias Alert Banner */}
             <BiasAlertBanner biasCheck={latestBias} />
+
+            {latestPanel?.requires_four_eyes_review && (
+              <div
+                style={{
+                  background: "rgba(245, 158, 11, 0.15)",
+                  border: "1px solid rgba(245, 158, 11, 0.5)",
+                  borderRadius: "8px",
+                  padding: "12px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                }}
+              >
+                <span style={{ fontSize: "1.4rem" }}>👥</span>
+                <div>
+                  <h4 style={{ color: "#fbbf24", margin: 0, fontSize: "0.9rem" }}>
+                    Four-Eyes Governance Escalation Active
+                  </h4>
+                  <p style={{ color: "#fde68a", margin: "2px 0 0 0", fontSize: "0.78rem" }}>
+                    Inter-agent score divergence across screening domains is ≥ 30 points. Two independent human talent reviewers are required to sign off on this candidate dossier.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="glass-card" style={{ padding: "16px 20px" }}>
               <h4 style={{ color: "#f8fafc", marginBottom: "8px" }}>Decision context</h4>
               <p style={{ color: "#cbd5e1", fontSize: "0.82rem", margin: "4px 0" }}>
-                Agent score agreement: <strong>{pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.confidence?.label || "UNAVAILABLE"}</strong>
-                {pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.confidence?.agreement_score != null && ` (${Math.round(pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id).confidence.agreement_score * 100)}%)`}
-                <span style={{ color: "#94a3b8" }}> · agreement heuristic, not a probability of job success</span>
+                Agent score agreement: <strong>{confidence?.label || "UNAVAILABLE"}</strong>
+                {confidence?.agreement_score != null && ` (${Math.round(confidence.agreement_score * 100)}%, spread ${confidence.score_spread} pts)`}
+                <span style={{ color: "#94a3b8" }}>
+                  {confidence?.label === "INCOMPLETE_EVIDENCE"
+                    ? " · one or more assessments were not submitted, so agreement cannot be measured"
+                    : " · agreement heuristic, not a probability of job success"}
+                </span>
               </p>
-              {(() => {
-                const history = pendingReviews.find(p => p.candidate_id === selectedCandidate.candidate_id)?.historical_context;
-                return <p style={{ color: "#cbd5e1", fontSize: "0.82rem", margin: "4px 0" }}>
-                  Similar prior hires: <strong>{history?.similar_hires ?? 0}</strong>
-                  {history?.success_rate != null ? ` · ${Math.round(history.success_rate * 100)}% recorded successful outcomes` : " · insufficient outcome history for a rate"}
-                  <span style={{ color: "#94a3b8" }}> · same role and scores within 5 points</span>
-                </p>;
-              })()}
+              <p style={{ color: "#cbd5e1", fontSize: "0.82rem", margin: "4px 0" }}>
+                Similar prior hires: <strong>{history?.similar_hires ?? 0}</strong>
+                {history?.success_rate != null ? ` · ${Math.round(history.success_rate * 100)}% recorded successful outcomes` : " · insufficient outcome history for a rate"}
+                <span style={{ color: "#94a3b8" }}> · same role and scores within 5 points</span>
+              </p>
             </div>
 
             {latestPanel?.natural_language_summary && <div className="glass-card" style={{ padding: "16px 20px" }}>
@@ -199,11 +266,12 @@ export default function HumanReviewPage({ currentRole, selectedCandidateId, setS
             </div>}
 
             {/* Multi-Agent Score Synthesis */}
+            {/* Uses the exact inputs the Panel Coordinator scored, so bars always match the summary. */}
             <ScoreRadar
-              resumeScore={latestScreening?.score || 0}
-              skillScore={techAssessment?.score || 0}
-              cultureScore={behAssessment?.score || 0}
-              mergedScore={latestPanel?.merged_score || 0}
+              resumeScore={latestPanel?.resume_score ?? 0}
+              skillScore={latestPanel?.skill_score ?? 0}
+              cultureScore={latestPanel?.culture_score ?? 0}
+              mergedScore={latestPanel?.merged_score ?? 0}
             />
 
             {/* Complete Evidence Docket */}

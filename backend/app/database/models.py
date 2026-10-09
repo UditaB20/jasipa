@@ -31,13 +31,13 @@ class Candidate(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
+    # Relationships (ordered oldest -> newest; PKs are UUIDs so insertion order is NOT implied)
     job_description = relationship("JobDescription", back_populates="candidates")
-    screening_results = relationship("ScreeningResult", back_populates="candidate", cascade="all, delete-orphan")
-    assessments = relationship("Assessment", back_populates="candidate", cascade="all, delete-orphan")
-    panel_decisions = relationship("PanelDecision", back_populates="candidate", cascade="all, delete-orphan")
-    bias_checks = relationship("BiasCheck", back_populates="candidate", cascade="all, delete-orphan")
-    human_reviews = relationship("HumanReview", back_populates="candidate", cascade="all, delete-orphan")
+    screening_results = relationship("ScreeningResult", back_populates="candidate", cascade="all, delete-orphan", order_by="ScreeningResult.created_at")
+    assessments = relationship("Assessment", back_populates="candidate", cascade="all, delete-orphan", order_by="Assessment.completed_date")
+    panel_decisions = relationship("PanelDecision", back_populates="candidate", cascade="all, delete-orphan", order_by="PanelDecision.created_at")
+    bias_checks = relationship("BiasCheck", back_populates="candidate", cascade="all, delete-orphan", order_by="BiasCheck.created_at")
+    human_reviews = relationship("HumanReview", back_populates="candidate", cascade="all, delete-orphan", order_by="HumanReview.timestamp")
     hiring_outcomes = relationship("HiringOutcome", back_populates="candidate", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="candidate", cascade="all, delete-orphan")
 
@@ -138,6 +138,7 @@ class PanelDecision(Base):
     decision_factors = Column(JSON, default=list)
     highlighted_concerns = Column(JSON, default=list)
     highlighted_strengths = Column(JSON, default=list)
+    requires_four_eyes_review = Column(Boolean, default=False)
     used_llm_synthesis = Column(Boolean, default=False)
     synthesis_latency_ms = Column(Integer, default=0)
     synthesis_strategy = Column(String, default="template")
@@ -177,6 +178,8 @@ class HumanReview(Base):
 
     review_id = Column(String, primary_key=True, default=generate_uuid, index=True)
     candidate_id = Column(String, ForeignKey("candidates.candidate_id"), nullable=False, index=True)
+    decision_id = Column(String, ForeignKey("panel_decisions.decision_id"), nullable=True, index=True)
+    bias_check_id = Column(String, ForeignKey("bias_checks.check_id"), nullable=True, index=True)
     reviewer_id = Column(String, nullable=False, default="HR_REVIEWER_01")
     reviewer_name = Column(String, nullable=False, default="Lead Talent Partner")
     decision = Column(
@@ -188,6 +191,8 @@ class HumanReview(Base):
 
     # Relationships
     candidate = relationship("Candidate", back_populates="human_reviews")
+    panel_decision = relationship("PanelDecision")
+    bias_check = relationship("BiasCheck")
 
 
 class HiringOutcome(Base):
@@ -262,6 +267,10 @@ class AuditLog(Base):
     input_reference = Column(JSON, default=dict)
     output = Column(JSON, default=dict)
     rubric_version = Column(String, nullable=True)
+    model_name = Column(String, default="gemini-2.5-flash")
+    prompt_version = Column(String, default="v2.1")
+    prev_hash = Column(String, nullable=True)
+    entry_hash = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
     # Relationships

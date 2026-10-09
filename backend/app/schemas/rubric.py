@@ -13,9 +13,17 @@ class RubricBase(BaseModel):
 class RubricCreate(RubricBase):
     pass
 
+class RubricUpdate(BaseModel):
+    resume_weight: Optional[float] = None
+    skill_weight: Optional[float] = None
+    culture_weight: Optional[float] = None
+    criteria: Optional[Dict[str, Any]] = None
+    version: Optional[str] = None
+
 class RubricResponse(RubricBase):
     rubric_id: str
     created_at: datetime
 
     class Config:
         from_attributes = True
+

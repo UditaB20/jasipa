@@ -38,10 +38,18 @@ flowchart TD
     HumanReviewer -->|APPROVE / REJECT / REQUEST_INFO| FinalDecision[Final Human Decision]
     
     FinalDecision --> AuditLog[(13. Immutable Audit Log & Memory)]
-    ScreenerAgent -.->|ATS State| MCP[MCP ATS Connector Tools]
-    SkillAgent -.->|ATS State| MCP
-    CultureAgent -.->|ATS State| MCP
-    PanelCoord -.->|ATS State| MCP
+    subgraph Orchestration["LangGraph Workflow Nodes"]
+        ScreenerNode["screening_node"]
+        SkillNode["skill_node"]
+        CultureNode["culture_node"]
+        PanelNode["panel_node"]
+        BiasNode["bias_node"]
+    end
+    ScreenerNode -.->|Persist State| MCP[MCP ATS Connector Tools]
+    SkillNode -.->|Persist State| MCP
+    CultureNode -.->|Persist State| MCP
+    PanelNode -.->|Persist State| MCP
+    BiasNode -.->|Persist State| MCP
     MCP <--> AuditLog
 ```
 
@@ -153,12 +161,53 @@ python -m pytest tests/
 11. **Step 11:** Human Reviewer inspects complete evidence dossier.
 12. **Step 12:** Human Reviewer signs off with `APPROVE` / `REJECT` / `REQUEST_MORE_INFORMATION` with notes.
 13. **Step 13:** System logs complete immutable audit trail.
-# Hiring outcomes and historical context
+---
 
-JASIPA now includes an HR-only outcome tracking flow at **Hiring Outcomes**. HR can record hire date, manager-reported performance (1–5), employment status, tenure, promotion date, attrition reason, and feedback for candidates with a human `APPROVE` decision. The outcome can be updated as new information arrives. Aggregate analytics are available at `GET /api/learning/analytics`.
+## 8. Hiring Outcomes and Historical Context
+
+JASIPA includes an HR-only outcome tracking flow at **Hiring Outcomes**. HR can record hire date, manager-reported performance (1–5), employment status, tenure, promotion date, attrition reason, and feedback for candidates with a human `APPROVE` decision. The outcome can be updated as new information arrives. Aggregate analytics are available at `GET /api/learning/analytics`.
 
 The human review queue shows an uncalibrated score-agreement heuristic and, when data is available, a descriptive comparison against prior hires in the same job with resume, technical, and behavioral scores within five points. A historical success rate is shown only when at least five similar hires have recorded outcome data; success is defined here as still employed and, when a rating exists, rating at least 3.5/5. These figures are descriptive and must not be treated as a probability or automated recommendation.
 
 The outcomes page labels performance on a 1–5 scale, shows the number of known employment statuses next to retention, warns on small samples, and lists each outcome beside the latest panel scores. New outcome submissions require a past hire date, manager rating, explicit employment status, and tenure from 0 to 120 months; manager name and feedback are optional, as is a promotion date. HR can select an existing record to update it. Candidate names, emails, or cohorts marked with a standalone `test`, `demo`, `mock`, or `e2e` marker are omitted from outcome analytics and tracking.
 
 This initial learning increment does not automatically change rubric weights or role thresholds, and it does not claim per-question effectiveness: submitted assessments currently store aggregate scores rather than a structured score for each question. Outcome data is self-reported by HR/manager and should be interpreted with its coverage in mind. Human approval remains mandatory.
+
+---
+
+## 10. Key Design Differences from README
+
+| Aspect | README Claims | Actual Code |
+|---|---|---|
+| **MCP Usage** | Agents call MCP tools | MCP tools are NOT called by agents; tools are called BY nodes AFTER agents complete |
+| **LLM in Agents** | "Agents evaluate using..." | LLM (Gemini) is called, but every agent has a deterministic FALLBACK if LLM fails |
+| **LLM Tool Use** | Agents use tools | NO agent uses tools directly. LLM only generates JSON responses; agents parse them |
+| **LangGraph** | Implied implicit | Explicit: `StateGraph(CandidateState)` with 5 nodes and sequential edges |
+| **Panel Coordinator** | Implied to use LLM | Deterministic: Pure Python weighted merge, no LLM call |
+| **Node Invocation** | Orchestration layer | Explicit: `/pipeline/run-full-graph` endpoint calls `graph.invoke(initial_state)` |
+| **Bias Flag Impact** | Affects decision | Bias flag is logged but NEVER affects recommendation; always routes to human review |
+| **Fallback Strategy** | Not mentioned | Every agent has regex/heuristic fallback if Gemini API fails |
+
+### Detailed Implementation Rationale
+
+1. **MCP Usage Separation**:
+   - Rather than embedding storage/side-effect logic inside evaluation agents, agents remain pure stateless functions that accept inputs and return structured Pydantic models.
+   - The LangGraph orchestration nodes (`screening_node`, `skill_node`, `culture_node`, `panel_node`, `bias_node`) invoke the agents first, and then explicitly call `ATSTools.save_*()` to persist records to the audit database.
+
+2. **LLM Strategy & Deterministic Fallbacks**:
+   - Every agent that queries Gemini (`ResumeScreenerAgent`, `SkillAssessorAgent`, `CultureFitAgent`) utilizes a graceful degradation pattern (`StrategyChain`).
+   - If the LLM call times out, returns malformed output, or exceeds quota (HTTP 429), the agent seamlessly drops back to an in-process heuristic/regex scoring engine, guaranteeing zero downtime.
+
+3. **No Direct Tool Calling in LLMs**:
+   - The LLM is strictly used for structured synthesis and text extraction conforming to JSON schemas.
+   - The LLM does not execute side effects or trigger arbitrary tools, mitigating prompt injection risks.
+
+4. **Deterministic Panel Coordinator**:
+   - `PanelCoordinatorAgent` computes the composite panel score using exact rubric weights:
+     `score = (resume * resume_wt) + (skill * skill_wt) + (culture * culture_wt)`.
+   - Synthesis logic for identifying strengths, gaps, and discrepancies uses deterministic threshold rules rather than unconstrained LLM hallucinations.
+
+5. **Non-Blocking Bias Flagging**:
+   - The `BiasCheckerAgent` evaluates demographic parity under the EEOC 4/5ths rule.
+   - When a disparity flag is triggered, it does **not** reject the candidate or modify scores; it appends an audit notification requiring human sign-off.
+

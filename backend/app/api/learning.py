@@ -108,7 +108,9 @@ def hiring_analytics(user: dict = Depends(require_hr), db: Session = Depends(get
 
 @router.get("/history")
 def outcome_history(user: dict = Depends(require_hr), db: Session = Depends(get_db)):
-    rows = db.query(HiringOutcome, Candidate, JobDescription).join(Candidate).outerjoin(
+    rows = db.query(HiringOutcome, Candidate, JobDescription).select_from(HiringOutcome).join(
+        Candidate, HiringOutcome.candidate_id == Candidate.candidate_id
+    ).outerjoin(
         JobDescription, Candidate.target_jd_id == JobDescription.jd_id
     ).order_by(HiringOutcome.updated_at.desc()).all()
     results = []
@@ -119,7 +121,7 @@ def outcome_history(user: dict = Depends(require_hr), db: Session = Depends(get_
         results.append({
             "outcome_id": outcome.outcome_id, "candidate_id": candidate.candidate_id,
             "candidate_name": candidate.name, "role": job.title if job else "Unassigned role",
-            "hired_date": outcome.hired_date.isoformat(), "performance_rating": outcome.performance_rating,
+            "hired_date": outcome.hired_date.isoformat() if outcome.hired_date else None, "performance_rating": outcome.performance_rating,
             "still_employed": outcome.still_employed, "months_employed": outcome.months_employed,
             "manager_name": outcome.manager_name, "promotion_date": outcome.promotion_date.isoformat() if outcome.promotion_date else None,
             "manager_feedback": outcome.manager_feedback, "updated_at": outcome.updated_at.isoformat() if outcome.updated_at else None,

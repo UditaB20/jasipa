@@ -36,4 +36,5 @@ class CohortAnalyticsResponse(BaseModel):
     cohorts: List[CohortMetric]
     overall_disparity_ratio: float
     disparity_detected: bool
+    flagged_candidates_count: int = 0
     summary: str

@@ -1,8 +1,23 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Clock, Bot, User, CheckCircle2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, Bot, User, CheckCircle2, ShieldCheck, Key } from "lucide-react";
+import { verifyAuditHashChain } from "../services/api";
 
 export default function AuditTimeline({ timeline = [] }) {
   const [expandedId, setExpandedId] = useState(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verificationResult, setVerificationResult] = useState(null);
+
+  const handleVerifyChain = async () => {
+    try {
+      setVerifying(true);
+      const res = await verifyAuditHashChain();
+      setVerificationResult(res);
+    } catch (err) {
+      setVerificationResult({ verified: false, error: err.message });
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   if (!timeline || timeline.length === 0) {
     return (
@@ -17,12 +32,65 @@ export default function AuditTimeline({ timeline = [] }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px", position: "relative" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px", position: "relative" }}>
+      {/* Cryptographic Hash Verification Header */}
+      <div
+        className="glass-card"
+        style={{
+          padding: "12px 18px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: "linear-gradient(90deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%)",
+          border: "1px solid rgba(56, 189, 248, 0.2)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <ShieldCheck size={20} color="#38bdf8" />
+          <div>
+            <span style={{ fontSize: "0.85rem", fontWeight: "700", color: "#f8fafc" }}>
+              Cryptographic SHA-256 Tamper-Evident Hash Chain
+            </span>
+            <p style={{ fontSize: "0.72rem", color: "#94a3b8", margin: 0 }}>
+              Append-only audit ledger with cryptographic forward-linkage.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          {verificationResult && (
+            <span
+              style={{
+                fontSize: "0.75rem",
+                fontWeight: "600",
+                color: verificationResult.verified ? "#34d399" : "#f87171",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <CheckCircle2 size={16} />
+              {verificationResult.verified
+                ? `Chain Verified (${verificationResult.total_entries_verified} blocks)`
+                : "Integrity Failed"}
+            </span>
+          )}
+          <button
+            onClick={handleVerifyChain}
+            disabled={verifying}
+            className="btn btn-secondary"
+            style={{ fontSize: "0.75rem", padding: "6px 12px", border: "1px solid rgba(56, 189, 248, 0.4)" }}
+          >
+            {verifying ? "Verifying Hash Chain..." : "Verify Hash Integrity"}
+          </button>
+        </div>
+      </div>
+
       {/* Vertical timeline connector */}
       <div
         style={{
           position: "absolute",
-          top: "16px",
+          top: "80px",
           bottom: "16px",
           left: "15px",
           width: "2px",
@@ -94,6 +162,25 @@ export default function AuditTimeline({ timeline = [] }) {
               </div>
 
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                {item.entry_hash && (
+                  <span
+                    style={{
+                      fontFamily: "monospace",
+                      fontSize: "0.68rem",
+                      background: "rgba(56, 189, 248, 0.1)",
+                      color: "#38bdf8",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      border: "1px solid rgba(56, 189, 248, 0.2)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px",
+                    }}
+                  >
+                    <Key size={10} />
+                    {item.entry_hash.slice(0, 10)}...
+                  </span>
+                )}
                 <span style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.7rem", color: "#64748b" }}>
                   <Clock size={12} />
                   {new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -112,6 +199,30 @@ export default function AuditTimeline({ timeline = [] }) {
                   fontSize: "0.75rem",
                 }}
               >
+                {item.entry_hash && (
+                  <div
+                    style={{
+                      marginBottom: "10px",
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      background: "rgba(15, 23, 42, 0.6)",
+                      border: "1px solid rgba(255, 255, 255, 0.06)",
+                    }}
+                  >
+                    <div style={{ color: "#94a3b8", fontSize: "0.7rem", fontWeight: "600" }}>
+                      SHA-256 Provenance Hashes:
+                    </div>
+                    <div style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "#38bdf8" }}>
+                      Entry Hash: {item.entry_hash}
+                    </div>
+                    {item.prev_hash && (
+                      <div style={{ fontFamily: "monospace", fontSize: "0.7rem", color: "#64748b" }}>
+                        Prev Hash:  {item.prev_hash}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ marginBottom: "8px" }}>
                   <span style={{ color: "#94a3b8", fontWeight: "600" }}>Input Reference / Context:</span>
                   <pre

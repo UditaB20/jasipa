@@ -107,21 +107,6 @@ MCP_TOOL_DEFINITIONS = [
         }
     },
     {
-        "name": "save_human_review",
-        "description": "Save final authenticated human reviewer decision into ATS.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "candidate_id": {"type": "string"},
-                "reviewer_id": {"type": "string"},
-                "reviewer_name": {"type": "string"},
-                "decision": {"type": "string"},
-                "notes": {"type": "string"}
-            },
-            "required": ["candidate_id", "decision", "notes"]
-        }
-    },
-    {
         "name": "get_candidate_history",
         "description": "Fetch immutable timeline audit history for a candidate.",
         "inputSchema": {
@@ -203,15 +188,6 @@ class MCPServer:
                 reason=arguments.get("reason", ""),
                 cohort_breakdown=arguments.get("cohort_breakdown", {}),
                 requires_human_review=arguments.get("requires_human_review", True)
-            )
-        elif name == "save_human_review":
-            return ATSTools.save_human_review(
-                db,
-                candidate_id=arguments["candidate_id"],
-                reviewer_id=arguments.get("reviewer_id", "HR_REVIEWER_01"),
-                reviewer_name=arguments.get("reviewer_name", "Lead Talent Partner"),
-                decision=arguments["decision"],
-                notes=arguments["notes"]
             )
         elif name == "get_candidate_history":
             return ATSTools.get_candidate_history(db, arguments.get("candidate_id"))

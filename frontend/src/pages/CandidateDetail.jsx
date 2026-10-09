@@ -277,6 +277,31 @@ export default function CandidateDetail({ candidateId, setActivePage, setSelecte
                   </div>
                 )}
 
+                {latestPanel.requires_four_eyes_review && (
+                  <div
+                    style={{
+                      background: "rgba(245, 158, 11, 0.15)",
+                      border: "1px solid rgba(245, 158, 11, 0.4)",
+                      borderRadius: "8px",
+                      padding: "10px 14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      marginBottom: "6px"
+                    }}
+                  >
+                    <span style={{ fontSize: "1.1rem" }}>👥</span>
+                    <div>
+                      <div style={{ fontSize: "0.82rem", fontWeight: "700", color: "#fbbf24" }}>
+                        Four-Eyes Governance Escalation Active
+                      </div>
+                      <div style={{ fontSize: "0.74rem", color: "#fde68a" }}>
+                        Inter-agent score divergence across screening domains is ≥ 30 points. Two independent human talent reviewers are required to sign off.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {latestPanel.disagreements?.length > 0 && (
                   <div>
                     <h4 style={{ fontSize: "0.8rem", color: "#fbbf24", fontWeight: "700", marginBottom: "4px" }}>

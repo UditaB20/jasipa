@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.database.session import get_db
@@ -7,7 +8,8 @@ from app.database.models import Candidate, JobDescription, Assessment, Screening
 from app.auth.security import require_candidate
 from app.services.assessment_service import (
     generate_technical_questions_for_jd, 
-    generate_behavioral_questions_for_jd
+    generate_behavioral_questions_for_jd,
+    sanitize_questions_for_candidate
 )
 from app.agents.skill_assessor import SkillAssessorAgent
 from app.agents.culture_fit import CultureFitAgent
@@ -236,13 +238,11 @@ def get_my_assessments(auth_user: dict = Depends(require_candidate), db: Session
         "job_title": jd.title if jd else "Technical Assessment",
         "technical": {
             "completed": completed_tech is not None,
-            "score": completed_tech.score if completed_tech else None,
-            "questions": tech_questions
+            "questions": sanitize_questions_for_candidate(tech_questions)
         },
         "behavioral": {
             "completed": completed_beh is not None,
-            "score": completed_beh.score if completed_beh else None,
-            "questions": beh_questions
+            "questions": sanitize_questions_for_candidate(beh_questions)
         }
     }
 
@@ -250,11 +250,22 @@ def get_my_assessments(auth_user: dict = Depends(require_candidate), db: Session
 def submit_my_technical_assessment(payload: CandidateSubmitAssessment, auth_user: dict = Depends(require_candidate), db: Session = Depends(get_db)):
     """
     Submits technical answers. Strictly binds the candidate_id to auth_user.
+    Prevents repeated retakes/score grinding once submitted.
     """
     cid = auth_user["candidate_id"]
     cand = db.query(Candidate).filter(Candidate.candidate_id == cid).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
+
+    existing_tech = db.query(Assessment).filter(
+        Assessment.candidate_id == cid,
+        Assessment.test_type == "TECHNICAL"
+    ).first()
+    if existing_tech:
+        raise HTTPException(
+            status_code=400,
+            detail="Technical assessment has already been submitted and finalized for this application."
+        )
 
     jd_id = payload.jd_id or cand.target_jd_id
     jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
@@ -294,26 +305,36 @@ def submit_my_technical_assessment(payload: CandidateSubmitAssessment, auth_user
 
     return {
         "status": "COMPLETED",
-        "score": skill_out.score,
-        "message": "Technical assessment submitted and evaluated successfully."
+        "message": "Technical assessment submitted and received successfully."
     }
 
 @router.post("/submit-behavioral")
 def submit_my_behavioral_assessment(payload: CandidateSubmitAssessment, auth_user: dict = Depends(require_candidate), db: Session = Depends(get_db)):
     """
     Submits behavioral answers. Strictly binds the candidate_id to auth_user.
+    Prevents repeated retakes/score grinding once submitted.
     """
     cid = auth_user["candidate_id"]
     cand = db.query(Candidate).filter(Candidate.candidate_id == cid).first()
     if not cand:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    existing_beh = db.query(Assessment).filter(
+        Assessment.candidate_id == cid,
+        Assessment.test_type == "BEHAVIORAL"
+    ).first()
+    if existing_beh:
+        raise HTTPException(
+            status_code=400,
+            detail="Behavioral assessment has already been submitted and finalized for this application."
+        )
+
     jd_id = payload.jd_id or cand.target_jd_id
     jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
     if not jd:
         jd = db.query(JobDescription).first()
 
-    questions = generate_behavioral_questions_for_jd()
+    questions = generate_behavioral_questions_for_jd(jd)
     answers_dict = [{"question_id": a.question_id, "answer_text": a.answer_text} for a in payload.answers]
 
     # Evaluate with CultureFitAgent
@@ -346,8 +367,7 @@ def submit_my_behavioral_assessment(payload: CandidateSubmitAssessment, auth_use
 
     return {
         "status": "COMPLETED",
-        "score": culture_out.score,
-        "message": "Behavioral assessment submitted and evaluated successfully."
+        "message": "Behavioral assessment submitted and received successfully."
     }
 
 @router.get("/timeline")
@@ -394,4 +414,74 @@ def get_my_timeline(auth_user: dict = Depends(require_candidate), db: Session = 
         "candidate_id": cid,
         "current_stage": cand.current_stage,
         "timeline": timeline_items
+    }
+
+@router.get("/explanation")
+def get_candidate_transparency_explanation(auth_user: dict = Depends(require_candidate), db: Session = Depends(get_db)):
+    """
+    Candidate Rights & Transparency Disclosure (NYC Local Law 144 & EU AI Act Art. 14):
+    Provides a clear, plain-language explanation of how automated screening assists human evaluators,
+    the rubric dimensions assessed, blind screening protections, and the right to request human re-review.
+    """
+    cid = auth_user["candidate_id"]
+    cand = db.query(Candidate).filter(Candidate.candidate_id == cid).first()
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    jd = db.query(JobDescription).filter(JobDescription.jd_id == cand.target_jd_id).first() if cand.target_jd_id else None
+
+    return {
+        "candidate_id": cid,
+        "applicant_name": cand.name,
+        "target_role": jd.title if jd else "Applied Role",
+        "current_stage": cand.current_stage,
+        "governance_guarantee": {
+            "autonomous_decisions_prohibited": True,
+            "human_in_the_loop_mandatory": True,
+            "summary": "JASIPA operates under strict AI governance: AI models evaluate qualifications against job rubrics, but AI is STRICTLY PROHIBITED from autonomously rejecting or hiring you. Every hiring outcome is finalized by human HR talent leads."
+        },
+        "evaluation_methodology": {
+            "blind_screening_mode": "Active (emails, phone numbers, and portfolio links are redacted prior to AI evaluation to prevent demographic bias)",
+            "rubric_anchoring": "Scores are calculated strictly against transparent, documented job requirements, not subjective impressions.",
+            "components": [
+                {"name": "Resume Experience Match", "weight": "40%", "description": "Verification of required skills and years of relevant experience."},
+                {"name": "Technical Assessment", "weight": "40%", "description": "Practical problem-solving, algorithms, and domain knowledge."},
+                {"name": "Behavioral Competency", "weight": "20%", "description": "STAR-method structured interview evaluating teamwork and communication."}
+            ]
+        },
+        "candidate_rights": {
+            "right_to_explanation": True,
+            "right_to_human_re_review": True,
+            "appeal_process": "You may request an expedited independent human re-review at any time using the re-review action."
+        }
+    }
+
+@router.post("/request-re-review")
+def request_human_re_review(auth_user: dict = Depends(require_candidate), db: Session = Depends(get_db)):
+    """
+    Invokes candidate right to appeal / request human re-review under NYC LL 144 / EU AI Act.
+    Logs an immutable audit event and transitions candidate current_stage to HUMAN_REVIEW_PENDING for immediate HR inspection.
+    """
+    cid = auth_user["candidate_id"]
+    cand = db.query(Candidate).filter(Candidate.candidate_id == cid).first()
+    if not cand:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    cand.current_stage = "HUMAN_REVIEW_PENDING"
+    db.commit()
+
+    log_event(
+        db,
+        stage="HUMAN_REVIEW_PENDING",
+        event="Candidate Formally Requested Human Re-Review (NYC LL 144 / EU AI Act Appeal)",
+        agent="HUMAN_CANDIDATE_APPEAL",
+        candidate_id=cid,
+        input_reference={"request_type": "EXPEDITED_HUMAN_RE_REVIEW"},
+        output={"status": "APPEAL_LOGGED", "appeal_timestamp": datetime.utcnow().isoformat()}
+    )
+
+    return {
+        "status": "SUCCESS",
+        "message": "Your request for human re-review has been formally recorded and logged to the tamper-evident audit ledger. Your application has been placed in the Human Review Docket for expedited inspection.",
+        "candidate_id": cid
     }

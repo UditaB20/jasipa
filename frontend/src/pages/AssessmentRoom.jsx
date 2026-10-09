@@ -1,274 +1,199 @@
 import React, { useState, useEffect } from "react";
-import { ListChecks, Code, MessageSquare, CheckCircle, ArrowRight, Play, Sparkles } from "lucide-react";
-import { 
-  getCandidates, getJobs, getTechnicalQuestions, getBehavioralQuestions,
-  submitTechnicalAssessment, submitBehavioralAssessment
-} from "../services/api";
+import { Code, MessageSquare, Clock, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
+import { getCandidates, getCandidate, getJobs } from "../services/api";
 
+/**
+ * Assessment Submissions (HR, read-only).
+ *
+ * Purpose: let HR audit exactly what a candidate submitted in the Candidate Portal and how the
+ * Skill-Assessor / Culture-Fit agents scored it. HR can NOT enter or edit answers here — doing so
+ * would inject non-candidate evidence into the panel decision. Data comes from the Assessment table.
+ */
 export default function AssessmentRoom({ selectedCandidateId, setSelectedCandidateId, setActivePage }) {
   const [candidates, setCandidates] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [techQuestions, setTechQuestions] = useState([]);
-  const [behQuestions, setBehQuestions] = useState([]);
-  
-  // Answers state
-  const [techAnswers, setTechAnswers] = useState({});
-  const [behAnswers, setBehAnswers] = useState({});
-
-  // Submitting / Result state
-  const [submittingTech, setSubmittingTech] = useState(false);
-  const [submittingBeh, setSubmittingBeh] = useState(false);
-  const [techResult, setTechResult] = useState(null);
-  const [behResult, setBehResult] = useState(null);
+  const [candidate, setCandidate] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("submitted"); // submitted | all
 
   useEffect(() => {
-    loadData();
+    (async () => {
+      try {
+        const [cList, jList] = await Promise.all([getCandidates(), getJobs()]);
+        setCandidates(cList || []);
+        setJobs(jList || []);
+        const initial = (cList || []).find(c => c.candidate_id === selectedCandidateId) || (cList || [])[0];
+        if (initial) await loadCandidate(initial.candidate_id);
+      } catch (err) {
+        console.error("Error loading assessment submissions:", err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadData() {
+  async function loadCandidate(id) {
     try {
-      const [cList, jList] = await Promise.all([getCandidates(), getJobs()]);
-      setCandidates(cList);
-      setJobs(jList);
-
-      const cand = cList.find(c => c.candidate_id === selectedCandidateId) || cList[0];
-      if (cand) {
-        selectCandidate(cand, jList);
-      }
+      const detail = await getCandidate(id);
+      setCandidate(detail);
+      setSelectedCandidateId(id);
     } catch (err) {
-      console.error("Error loading assessment room:", err);
+      console.error("Error loading candidate:", err);
     }
   }
 
-  async function selectCandidate(cand, jList = jobs) {
-    setSelectedCandidate(cand);
-    setSelectedCandidateId(cand.candidate_id);
-    const jdId = cand.target_jd_id || (jList.length > 0 ? jList[0].jd_id : "JD-SWE-101");
+  // Backend orders assessments oldest -> newest; keep the latest attempt per test type.
+  const latestOf = (type) => (candidate?.assessments || []).filter(a => a.test_type === type).at(-1);
+  const tech = latestOf("TECHNICAL");
+  const beh = latestOf("BEHAVIORAL");
+  const jobTitle = jobs.find(j => j.jd_id === candidate?.target_jd_id)?.title || candidate?.target_jd_id || "Unassigned";
 
-    try {
-      const [tq, bq] = await Promise.all([
-        getTechnicalQuestions(jdId),
-        getBehavioralQuestions(jdId)
-      ]);
-      setTechQuestions(tq.questions || []);
-      setBehQuestions(bq.questions || []);
+  const SUBMITTED_STAGES = ["TECHNICAL_ASSESSED", "BEHAVIORAL_ASSESSED", "PANEL_EVALUATED", "BIAS_CHECKED", "HUMAN_REVIEW_PENDING", "DECIDED"];
+  const visibleCandidates = filter === "all" ? candidates : candidates.filter(c => SUBMITTED_STAGES.includes(c.current_stage));
 
-      // Autofill starter answers for easy testing
-      const tAns = {};
-      (tq.questions || []).forEach(q => {
-        if (q.type === "mcq") tAns[q.question_id] = "B";
-        else if (q.type === "short_answer") tAns[q.question_id] = "SELECT DISTINCT salary FROM employees ORDER BY salary DESC LIMIT 1 OFFSET 1;";
-        else if (q.type === "coding") tAns[q.question_id] = "def has_cycle(graph):\n    visited = set()\n    rec_stack = set()\n    def dfs(node):\n        visited.add(node)\n        rec_stack.add(node)\n        for neighbor in graph.get(node, []):\n            if neighbor not in visited and dfs(neighbor): return True\n            elif neighbor in rec_stack: return True\n        rec_stack.remove(node)\n        return False\n    for node in graph:\n        if node not in visited and dfs(node): return True\n    return False\n# Time Complexity: O(V + E)";
-      });
-      setTechAnswers(tAns);
-
-      const bAns = {
-        "BEH_Q1": "In my previous role, a teammate and I disagreed on caching. I benchmarked Redis vs Memcached on latency, presented the data calmly, and the team adopted our hybrid Redis strategy.",
-        "BEH_Q2": "Given vague latency requirements on a pipeline, I broke the challenge into ingestion and queuing stages, scheduled stakeholder demos, and delivered an MVP.",
-        "BEH_Q3": "When required to learn Kubernetes within 2 weeks for release, I spun up local Minikube clusters, wrote Helm charts, and deployed successfully.",
-        "BEH_Q4": "I communicated API decoupling to non-technical leaders by using business process flow diagrams rather than raw code syntax."
-      };
-      setBehAnswers(bAns);
-    } catch (err) {
-      console.error("Error loading questions:", err);
-    }
-  }
-
-  async function handleSubmitTechnical(e) {
-    e.preventDefault();
-    setSubmittingTech(true);
-    try {
-      const answersList = Object.entries(techAnswers).map(([qid, text]) => ({
-        question_id: qid,
-        answer_text: text
-      }));
-      const res = await submitTechnicalAssessment({
-        candidate_id: selectedCandidate.candidate_id,
-        jd_id: selectedCandidate.target_jd_id || "JD-SWE-101",
-        answers: answersList
-      });
-      setTechResult(res);
-    } catch (err) {
-      alert("Technical submission failed: " + err.message);
-    } finally {
-      setSubmittingTech(false);
-    }
-  }
-
-  async function handleSubmitBehavioral(e) {
-    e.preventDefault();
-    setSubmittingBeh(true);
-    try {
-      const answersList = Object.entries(behAnswers).map(([qid, text]) => ({
-        question_id: qid,
-        answer_text: text
-      }));
-      const res = await submitBehavioralAssessment({
-        candidate_id: selectedCandidate.candidate_id,
-        jd_id: selectedCandidate.target_jd_id || "JD-SWE-101",
-        answers: answersList
-      });
-      setBehResult(res);
-    } catch (err) {
-      alert("Behavioral submission failed: " + err.message);
-    } finally {
-      setSubmittingBeh(false);
-    }
+  if (loading) {
+    return <div className="page-container" style={{ textAlign: "center", padding: "80px 0", color: "#94a3b8" }}>Loading assessment submissions...</div>;
   }
 
   return (
     <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-        <div>
-          <h2 style={{ fontSize: "1.4rem", fontWeight: "800", color: "#f8fafc" }}>
-            Candidate Assessment Room
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
-            Separate technical ability evaluation from resume screening. Administer standardized technical and STAR behavioral assessments.
-          </p>
+      <div style={{ marginBottom: "20px" }}>
+        <h2 style={{ fontSize: "1.4rem", fontWeight: "800", color: "#f8fafc" }}>Assessment Submissions</h2>
+        <p style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
+          Read-only record of answers candidates submitted in the Candidate Portal and how each agent scored them.
+          HR cannot enter or modify answers.
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: "24px" }}>
+        {/* Candidate list */}
+        <div className="glass-card" style={{ padding: "16px", alignSelf: "start" }}>
+          <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+            {[["submitted", "With submissions"], ["all", "All candidates"]].map(([key, label]) => (
+              <button key={key} id={`assessment-filter-${key}`} onClick={() => setFilter(key)}
+                className={filter === key ? "btn btn-primary" : "btn btn-secondary"}
+                style={{ padding: "4px 10px", fontSize: "0.72rem", flex: 1 }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "65vh", overflowY: "auto" }}>
+            {visibleCandidates.length === 0 && (
+              <p style={{ fontSize: "0.8rem", color: "#64748b", padding: "12px" }}>No candidates have submitted assessments yet.</p>
+            )}
+            {visibleCandidates.map(c => {
+              const active = candidate?.candidate_id === c.candidate_id;
+              return (
+                <div key={c.candidate_id} onClick={() => loadCandidate(c.candidate_id)}
+                  style={{ padding: "10px 12px", borderRadius: "8px", cursor: "pointer",
+                    background: active ? "rgba(99,102,241,0.18)" : "rgba(30,41,59,0.4)",
+                    border: active ? "1px solid #6366f1" : "1px solid rgba(255,255,255,0.05)" }}>
+                  <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "#f8fafc" }}>{c.name}</div>
+                  <div style={{ fontSize: "0.7rem", color: "#94a3b8" }}>{c.current_stage.replaceAll("_", " ")}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Candidate Selector */}
+        {/* Submissions */}
+        {candidate ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            <div className="glass-card" style={{ padding: "18px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 800, color: "#f8fafc" }}>{candidate.name}</h3>
+                <p style={{ fontSize: "0.78rem", color: "#94a3b8" }}>{candidate.email} · Role: {jobTitle}</p>
+              </div>
+              <button id="assessment-open-dossier" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: "0.75rem" }}
+                onClick={() => setActivePage("candidate-detail")}>
+                <span>Open Dossier</span><ArrowRight size={13} />
+              </button>
+            </div>
+
+            <SubmissionCard title="Technical Assessment" agent="Skill-Assessor Agent" icon={Code} color="#818cf8" assessment={tech} />
+            <SubmissionCard title="Behavioral (STAR) Assessment" agent="Culture-Fit Agent" icon={MessageSquare} color="#c084fc" assessment={beh} />
+          </div>
+        ) : (
+          <div style={{ padding: "40px", textAlign: "center", color: "#64748b" }}>Select a candidate.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SubmissionCard({ title, agent, icon: Icon, color, assessment }) {
+  if (!assessment) {
+    return (
+      <div className="glass-card" style={{ padding: "20px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+          <Icon size={18} color={color} />
+          <h4 style={{ fontSize: "1rem", fontWeight: 700, color: "#f8fafc" }}>{title}</h4>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#fbbf24", fontSize: "0.82rem" }}>
+          <Clock size={15} /> Not submitted by the candidate yet. The panel will treat this stage as INSUFFICIENT_EVIDENCE.
+        </div>
+      </div>
+    );
+  }
+
+  const answers = Object.fromEntries((assessment.answers || []).map(a => [a.question_id, a.answer_text]));
+  const completed = assessment.status === "COMPLETED";
+
+  return (
+    <div className="glass-card" style={{ padding: "20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <label style={{ fontSize: "0.78rem", color: "#94a3b8", fontWeight: "600" }}>Active Candidate:</label>
-          <select
-            className="form-select"
-            style={{ width: "240px" }}
-            value={selectedCandidate?.candidate_id || ""}
-            onChange={(e) => {
-              const cand = candidates.find(c => c.candidate_id === e.target.value);
-              if (cand) selectCandidate(cand);
-            }}
-          >
-            {candidates.map(c => (
-              <option key={c.candidate_id} value={c.candidate_id}>
-                {c.name} ({c.cohort_tag || "General"})
-              </option>
-            ))}
-          </select>
+          <Icon size={18} color={color} />
+          <div>
+            <h4 style={{ fontSize: "1rem", fontWeight: 700, color: "#f8fafc" }}>{title}</h4>
+            <p style={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+              Scored by {agent} · submitted {new Date(assessment.completed_date).toLocaleString()}
+            </p>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: "1.1rem", fontWeight: 800, color }}>{assessment.score}/100</div>
+          <span style={{ fontSize: "0.7rem", fontWeight: 600, color: completed ? "#34d399" : "#fb7185", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            {completed ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}{assessment.status}
+          </span>
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
-        {/* Left: Technical Skill Assessment */}
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
-            <Code size={20} color="#6366f1" />
-            <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc" }}>
-              Technical Assessment (Skill-Assessor Agent)
-            </h3>
-          </div>
-          <p style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "18px" }}>
-            Assesses candidate's demonstrated knowledge in Python, SQL queries, and algorithmic complexity.
-          </p>
-
-          <form onSubmit={handleSubmitTechnical} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {techQuestions.map((q, idx) => (
-              <div key={q.question_id} style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "10px", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                  <span style={{ fontSize: "0.75rem", fontWeight: "700", color: "#818cf8" }}>
-                    Q{idx + 1}: {q.competency_or_skill} ({q.type.toUpperCase()})
-                  </span>
-                </div>
-                <p style={{ fontSize: "0.82rem", color: "#f8fafc", marginBottom: "8px" }}>{q.prompt}</p>
-
-                {q.options && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginBottom: "8px" }}>
-                    {q.options.map(opt => (
-                      <div key={opt} style={{ fontSize: "0.75rem", color: "#94a3b8" }}>{opt}</div>
-                    ))}
-                  </div>
-                )}
-
-                <textarea
-                  className="form-textarea"
-                  rows={q.type === "coding" ? 5 : 2}
-                  style={{ fontFamily: q.type === "coding" ? "monospace" : "inherit", fontSize: "0.78rem" }}
-                  value={techAnswers[q.question_id] || ""}
-                  onChange={(e) => setTechAnswers({ ...techAnswers, [q.question_id]: e.target.value })}
-                  placeholder="Enter answer..."
-                />
-              </div>
-            ))}
-
-            <button type="submit" className="btn btn-primary" disabled={submittingTech}>
-              <Play size={15} />
-              <span>{submittingTech ? "Skill-Assessor Evaluating..." : "Submit to Skill-Assessor Agent"}</span>
-            </button>
-          </form>
-
-          {/* Technical Result Display */}
-          {techResult && (
-            <div style={{ marginTop: "18px", padding: "16px", borderRadius: "10px", background: "rgba(99, 102, 241, 0.15)", border: "1px solid rgba(99, 102, 241, 0.3)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "0.9rem", fontWeight: "700", color: "#818cf8" }}>Technical Score: {techResult.score}/100</span>
-                <span style={{ fontSize: "0.72rem", color: "#34d399", fontWeight: "600" }}>{techResult.status}</span>
-              </div>
-              <ul style={{ paddingLeft: "18px", fontSize: "0.75rem", color: "#cbd5e1", marginTop: "8px" }}>
-                {techResult.evidence?.map((e, idx) => (
-                  <li key={idx}>{e}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+      {assessment.skill_breakdown && Object.keys(assessment.skill_breakdown).length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
+          {Object.entries(assessment.skill_breakdown).map(([k, v]) => (
+            <span key={k} style={{ fontSize: "0.7rem", padding: "2px 8px", borderRadius: 6, background: "rgba(255,255,255,0.05)", color: "#cbd5e1" }}>
+              {k}: {typeof v === "number" ? v : JSON.stringify(v)}
+            </span>
+          ))}
         </div>
+      )}
 
-        {/* Right: Standardized Behavioral STAR Assessment */}
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
-            <MessageSquare size={20} color="#a855f7" />
-            <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc" }}>
-              Standardized Behavioral Assessment (Culture-Fit Agent)
-            </h3>
-          </div>
-          <p style={{ fontSize: "0.78rem", color: "#94a3b8", marginBottom: "18px" }}>
-            Evaluates Communication, Teamwork, Problem Solving, and Adaptability using the STAR method.
-          </p>
-
-          <form onSubmit={handleSubmitBehavioral} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {behQuestions.map((q, idx) => (
-              <div key={q.question_id} style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "10px", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px" }}>
-                  <span style={{ fontSize: "0.75rem", fontWeight: "700", color: "#c084fc" }}>
-                    Q{idx + 1}: {q.competency_or_skill}
-                  </span>
-                </div>
-                <p style={{ fontSize: "0.82rem", color: "#f8fafc", marginBottom: "8px" }}>{q.prompt}</p>
-
-                <textarea
-                  className="form-textarea"
-                  rows={3}
-                  style={{ fontSize: "0.78rem" }}
-                  value={behAnswers[q.question_id] || ""}
-                  onChange={(e) => setBehAnswers({ ...behAnswers, [q.question_id]: e.target.value })}
-                  placeholder="Candidate STAR response..."
-                />
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {(assessment.questions || []).map((q, idx) => {
+          const ans = answers[q.question_id];
+          return (
+            <div key={q.question_id || idx} style={{ background: "rgba(15,23,42,0.7)", padding: "12px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.05)" }}>
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, color }}>
+                Q{idx + 1}: {q.competency_or_skill}{q.type ? ` (${String(q.type).toUpperCase()})` : ""}
               </div>
-            ))}
-
-            <button type="submit" className="btn btn-primary" style={{ background: "linear-gradient(135deg, #a855f7 0%, #7e22ce 100%)" }} disabled={submittingBeh}>
-              <Sparkles size={15} />
-              <span>{submittingBeh ? "Culture-Fit Agent Evaluating..." : "Submit to Culture-Fit Agent"}</span>
-            </button>
-          </form>
-
-          {/* Behavioral Result Display */}
-          {behResult && (
-            <div style={{ marginTop: "18px", padding: "16px", borderRadius: "10px", background: "rgba(168, 85, 247, 0.15)", border: "1px solid rgba(168, 85, 247, 0.3)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "0.9rem", fontWeight: "700", color: "#c084fc" }}>Behavioral STAR Score: {behResult.score}/100</span>
-                <span style={{ fontSize: "0.72rem", color: behResult.status === "COMPLETED" ? "#34d399" : "#fb7185", fontWeight: "600" }}>{behResult.status}</span>
-              </div>
-              <ul style={{ paddingLeft: "18px", fontSize: "0.75rem", color: "#cbd5e1", marginTop: "8px" }}>
-                {behResult.evidence?.map((e, idx) => (
-                  <li key={idx}>{e}</li>
-                ))}
-              </ul>
+              <p style={{ fontSize: "0.8rem", color: "#f8fafc", margin: "4px 0 8px" }}>{q.prompt}</p>
+              <pre style={{ whiteSpace: "pre-wrap", fontFamily: q.type === "coding" ? "monospace" : "inherit", fontSize: "0.76rem",
+                color: ans ? "#cbd5e1" : "#64748b", background: "rgba(0,0,0,0.25)", padding: "8px 10px", borderRadius: 6, margin: 0 }}>
+                {ans || "(no answer submitted)"}
+              </pre>
             </div>
-          )}
-        </div>
+          );
+        })}
       </div>
+
+      {!!assessment.evidence?.length && (
+        <div style={{ marginTop: "14px" }}>
+          <div style={{ fontSize: "0.75rem", fontWeight: 700, color: "#94a3b8", marginBottom: 4 }}>Agent evidence</div>
+          <ul style={{ paddingLeft: 18, fontSize: "0.75rem", color: "#cbd5e1", margin: 0 }}>
+            {assessment.evidence.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
