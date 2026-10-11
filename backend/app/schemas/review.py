@@ -1,22 +1,27 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Literal, Optional
 from datetime import datetime
+
 
 class HumanReviewCreate(BaseModel):
     candidate_id: str
-    reviewer_id: str = "HR_REVIEWER_01"
-    reviewer_name: str = "Lead Talent Reviewer"
-    decision: str # "APPROVE", "REJECT", "REQUEST_MORE_INFORMATION"
+    decision: Literal["APPROVE", "REJECT", "REQUEST_MORE_INFORMATION"]
+    notes: str = Field(min_length=10, max_length=4000)
+    # The decision is bound to a specific panel decision and its bias check; defaults to the latest.
+    decision_id: Optional[str] = None
+
+
+class HumanReviewResponse(BaseModel):
+    review_id: str
+    candidate_id: str
+    reviewer_id: str
+    reviewer_name: str
+    decision: str
     notes: str
     decision_id: Optional[str] = None
     bias_check_id: Optional[str] = None
-
-class HumanReviewResponse(HumanReviewCreate):
-    review_id: str
+    is_final: Optional[bool] = True
     timestamp: datetime
-    decision_id: Optional[str] = None
-    bias_check_id: Optional[str] = None
 
     class Config:
         from_attributes = True
-

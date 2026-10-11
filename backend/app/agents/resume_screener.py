@@ -55,7 +55,8 @@ class ResumeScreenerAgent:
                 status="INSUFFICIENT_EVIDENCE")
 
         # 1. Blind screening pass (PII minimization)
-        blinded_resume = redact_pii_for_blind_screening(resume_text[:3000])
+        # The deterministic matcher reads the whole resume; only the LLM prompt is truncated.
+        blinded_resume = redact_pii_for_blind_screening(resume_text[:20000])
 
         # 2. Prompt injection guard pass
         guarded_resume, injection_alerts = sanitize_and_guard_resume_text(blinded_resume)
@@ -80,7 +81,7 @@ class ResumeScreenerAgent:
             f"Preferred Skills: {jd_data.get('preferred_skills', [])}\n"
             f"Minimum Experience: {jd_data.get('min_experience', 0)} years\n\n"
             f"Scoring Rubric Spec (Version {rubric_version}):\n{rubric_spec}\n\n"
-            f"<candidate_profile_untrusted_data>\n{guarded_resume}\n</candidate_profile_untrusted_data>"
+            f"<candidate_profile_untrusted_data>\n{guarded_resume[:6000]}\n</candidate_profile_untrusted_data>"
         )
         chain = configured_chain({"llm": LLMStrategy(), "regex": RegexStrategy(), "heuristic": HeuristicStrategy()},
                                  ("llm", "regex", "heuristic"), "ResumeScreenerAgent", candidate_id)

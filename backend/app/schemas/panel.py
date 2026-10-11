@@ -24,6 +24,7 @@ class PanelDecisionOutput(BaseModel):
     synthesis_latency_ms: int = 0
     synthesis_strategy: str = "template"
     synthesis_error: Optional[str] = None
+    round_number: Optional[int] = None
 
 class PanelDecisionResponse(PanelDecisionOutput):
     decision_id: str

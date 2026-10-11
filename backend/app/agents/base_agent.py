@@ -40,12 +40,21 @@ class LLMStrategy(EvaluationStrategy):
                 return {"success": False, "data": {}, "error": "LLM_INVALID_RESPONSE", "latency_ms": _elapsed_ms(started)}
             return {"success": True, "data": data, "error": None, "latency_ms": _elapsed_ms(started)}
         except Exception as exc:
-            error = "LLM_TIMEOUT" if "timeout" in type(exc).__name__.lower() else "LLM_API_ERROR"
+            if str(exc) == "LLM_DISABLED":
+                error = "LLM_DISABLED"
+            else:
+                error = "LLM_TIMEOUT" if "timeout" in type(exc).__name__.lower() else "LLM_API_ERROR"
             return {"success": False, "data": {}, "error": error, "latency_ms": _elapsed_ms(started)}
 
 
+def mentions(text: str, term: str) -> bool:
+    """Word-bounded, case-insensitive match that also works for terms like C++, C# and Node.js."""
+    term = str(term or "").lower().strip()
+    return bool(term) and re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text) is not None
+
+
 class RegexStrategy(EvaluationStrategy):
-    """Evidence-based resume skill and experience matcher."""
+    """Evidence-based resume matcher scored with the rubric's anchored resume weights."""
     def __init__(self):
         super().__init__("regex")
 
@@ -62,35 +71,65 @@ class RegexStrategy(EvaluationStrategy):
                     "evidence": ["Insufficient resume text for deterministic screening."]}}
 
         lowered = resume.lower()
-        matched = [skill for skill in required if re.search(r"\b" + re.escape(str(skill).lower()) + r"\b", lowered)]
+        matched = [skill for skill in required if mentions(lowered, skill)]
         missing = [skill for skill in required if skill not in matched]
-        matched_preferred = [skill for skill in preferred if re.search(r"\b" + re.escape(str(skill).lower()) + r"\b", lowered)]
+        matched_preferred = [skill for skill in preferred if mentions(lowered, skill)]
         year_patterns = (
-            r"(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:relevant\s+)?experience",
+            r"(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)(?:\s+of)?\s+(?:\w+\s+){0,3}?experience",
             r"experience\s+(?:of\s+)?(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)",
         )
-        years = [float(value) for pattern in year_patterns for value in re.findall(pattern, lowered)]
-        experience = max(years, default=0.0)
+        years = [float(value) for pattern in year_patterns for value in re.findall(pattern, lowered) if 0 < float(value) <= 50]
+        experience = max(years, default=float(kwargs.get("profile_experience_years") or 0.0))
         minimum = float(jd.get("min_experience") or 0)
-        weights = rubric.get("criteria") or {}
-        # Keep the transparent baseline; rubric weights can scale the two skill components.
-        req_weight = float(weights.get("required_skill_weight", 50.0))
-        preferred_weight = float(weights.get("preferred_skill_weight", 15.0))
-        exp_points = 20.0 if experience >= minimum else (20.0 * experience / minimum if minimum else 20.0)
+
+        anchors = (rubric.get("criteria") or {}).get("resume_scoring") or {}
+        req_weight = float(anchors.get("required_skills_weight", 50))
+        pref_weight = float(anchors.get("preferred_skills_weight", 15))
+        exp_weight = float(anchors.get("experience_weight", 20))
+        edu_weight = float(anchors.get("education_and_projects_weight", 15))
+        total_weight = (req_weight + pref_weight + exp_weight + edu_weight) or 100.0
+
         req_ratio = len(matched) / len(required) if required else 1.0
-        preferred_ratio = len(matched_preferred) / len(preferred) if preferred else 1.0
-        education_points = 15.0 if re.search(r"\b(bachelor|master|b\.tech|computer science)\b", lowered) else 10.0
-        score = round(max(0.0, min(100.0, req_ratio * req_weight + preferred_ratio * preferred_weight + exp_points + education_points)), 1)
-        evidence = [f"Resume mentions required skill: {skill}." for skill in matched[:4]]
-        evidence += [f"Resume declares {experience:g} years of experience." if experience else "Experience years were not explicitly found."]
+        pref_ratio = len(matched_preferred) / len(preferred) if preferred else 1.0
+        exp_ratio = 1.0 if not minimum or experience >= minimum else experience / minimum
+        has_degree = re.search(r"\b(bachelor|master|ph\.?d|b\.?\s?tech|m\.?\s?tech|b\.?\s?sc|m\.?\s?sc|degree|diploma)\b", lowered)
+        has_projects = re.search(r"\b(project|built|developed|designed|led|implemented|launched|delivered)\b", lowered)
+        edu_ratio = (0.6 if has_degree else 0.0) + (0.4 if has_projects else 0.0)
+        points = req_ratio * req_weight + pref_ratio * pref_weight + exp_ratio * exp_weight + edu_ratio * edu_weight
+        score = round(max(0.0, min(100.0, 100.0 * points / total_weight)), 1)
+
+        evidence = [f"Resume mentions required skill: {skill}." for skill in matched[:5]]
+        if missing:
+            evidence.append(f"No resume evidence for required skill(s): {', '.join(missing[:5])}.")
+        evidence.append(f"Resume states {experience:g} years of experience (minimum {minimum:g})." if experience
+                        else "Years of experience were not stated in the resume.")
+        evidence.append(f"Rubric points: required {req_ratio * req_weight:.1f}/{req_weight:g}, preferred {pref_ratio * pref_weight:.1f}/{pref_weight:g}, "
+                        f"experience {exp_ratio * exp_weight:.1f}/{exp_weight:g}, education & projects {edu_ratio * edu_weight:.1f}/{edu_weight:g}.")
         return {"success": True, "data": {"status": "COMPLETED", "score": score,
                 "matched_skills": matched, "matched_requirements": matched, "missing_requirements": missing,
                 "matched_preferred": matched_preferred, "experience_years": experience,
                 "experience_match": experience >= minimum if minimum else True, "evidence": evidence}}
 
 
+def score_open_answer(question: Dict[str, Any], answer: str) -> Tuple[float, str]:
+    """Keyword-rubric score for a short-answer or scenario response (deterministic fallback)."""
+    lowered = answer.lower()
+    guide = str(question.get("rubric_guideline") or "").lower()
+    prompt = str(question.get("prompt") or "").lower()
+    stop = {"the", "and", "for", "from", "with", "that", "this", "which", "what", "write", "query", "answer", "expects",
+            "strong", "answers", "expected", "elements", "least", "one", "would", "how", "your", "you", "will", "describe",
+            "role", "work", "main", "depth", "named", "take", "check", "result", "approach", "apply", "into", "such"}
+    keywords = {w.strip(".,:;()") for w in re.findall(r"[a-z][a-z0-9_+#.-]{2,}", guide + " " + prompt)} - stop
+    hits = sorted(word for word in keywords if word and mentions(lowered, word))
+    words = len(answer.split())
+    structure = 15.0 if words >= 40 else 8.0 if words >= 15 else 0.0
+    coverage = min(60.0, 60.0 * len(hits) / max(6, len(keywords) // 3)) if keywords else 30.0
+    score = round(min(100.0, (20.0 if words >= 5 else 0.0) + coverage + structure), 1)
+    return score, f"keyword rubric matched {len(hits)} relevant term(s), {words} words"
+
+
 class HeuristicStrategy(EvaluationStrategy):
-    """Deterministic question-type scoring for technical assessments."""
+    """Deterministic scoring of open-ended technical answers (MCQ and coding are scored objectively elsewhere)."""
     def __init__(self):
         super().__init__("heuristic")
 
@@ -99,48 +138,32 @@ class HeuristicStrategy(EvaluationStrategy):
         answers = {a.get("question_id"): str(a.get("answer_text", "")).strip() for a in kwargs.get("answers", [])}
         if not questions:
             return {"success": False, "data": {}, "error": "NO_QUESTIONS"}
-        breakdown: Dict[str, float] = {}
+        question_scores: Dict[str, float] = {}
         evidence: List[str] = []
         for question in questions:
             qid = question.get("question_id")
             skill = question.get("competency_or_skill", "General")
             answer = answers.get(qid, "")
-            kind = str(question.get("type", "short_answer")).lower()
             if not answer:
-                score = 0.0
-                evidence.append(f"{skill}: Question {qid} was unanswered.")
-            elif kind == "mcq":
-                correct = str(question.get("correct_option", "")).strip().upper()
-                score = 100.0 if correct and re.search(rf"(?<![A-Z0-9]){re.escape(correct)}(?![A-Z0-9])", answer.upper()) else 30.0
-                evidence.append(f"{skill}: Multiple-choice answer scored {'correctly' if score == 100 else 'incorrectly'} by answer key.")
-            elif kind == "coding":
-                lowered = answer.lower()
-                function = any(term in lowered for term in ("def ", "function ", "class ", "public ", "=>"))
-                logic = any(term in lowered for term in ("if ", "for ", "while ", "return", "visited", "queue", "stack", "recursion"))
-                complexity = any(term in lowered for term in ("o(v", "o(n", "o(e", "complexity", "o(log"))
-                score = float((30 if function else 0) + (50 if logic else 0) + (20 if complexity else 0))
-                evidence.append(f"{skill}: Coding rubric points (function 30, logic 50, complexity 20) = {score:.0f}/100.")
-            else:
-                lowered = answer.lower()
-                guide = str(question.get("rubric_guideline") or "").lower()
-                prompt = str(question.get("prompt") or "").lower()
-                keywords = set(re.findall(r"[a-z][a-z0-9_+#.-]{2,}", guide + " " + prompt))
-                keywords -= {"the", "and", "for", "from", "with", "that", "this", "which", "what", "write", "query", "answer", "expects"}
-                hits = sum(1 for word in keywords if word in lowered)
-                score = min(100.0, 25.0 + min(60.0, hits * 15.0) + (15.0 if len(answer.split()) >= 12 else 0.0))
-                evidence.append(f"{skill}: Short-answer keyword rubric matched {hits} relevant terms.")
-            breakdown[skill] = round(score, 1)
-        overall = round(sum(breakdown.values()) / len(questions), 1)
-        return {"success": True, "data": {"score": overall, "breakdown": breakdown, "evidence": evidence, "status": "COMPLETED"}}
+                question_scores[qid] = 0.0
+                evidence.append(f"{skill}: question {qid} was unanswered.")
+                continue
+            score, detail = score_open_answer(question, answer)
+            question_scores[qid] = score
+            evidence.append(f"{skill}: {detail} ({score:.0f}/100).")
+        overall = round(sum(question_scores.values()) / len(question_scores), 1)
+        return {"success": True, "data": {"score": overall, "question_scores": question_scores,
+                                          "evidence": evidence, "status": "COMPLETED"}}
 
 
 class STARFrameworkStrategy(EvaluationStrategy):
     """Scores presence of STAR response structure, not personality or cultural similarity."""
     MARKERS = {
-        "situation": ("situation", "when", "during", "in a project", "previous role", "at my previous"),
-        "task": ("task", "responsible for", "needed to", "goal was", "required me to", "challenge was"),
-        "action": ("i ", "we ", "implemented", "organized", "proposed", "analyzed", "communicated", "decided"),
-        "result": ("result", "outcome", "improved", "reduced", "delivered", "resolved", "learned", "achieved"),
+        "situation": ("situation", "when i", "during", "in a project", "previous role", "at my previous", "while working", "last year", "once"),
+        "task": ("task", "responsible for", "needed to", "goal was", "required me to", "challenge was", "my role", "asked to", "had to"),
+        "action": ("i implemented", "i organized", "i proposed", "i analyzed", "i communicated", "i decided", "i built", "i led",
+                   "i created", "i set up", "i scheduled", "i worked", "i wrote", "i reached out", "i introduced", "i designed", "we agreed"),
+        "result": ("result", "outcome", "improved", "reduced", "delivered", "resolved", "learned", "achieved", "increased", "saved", "%"),
     }
 
     def __init__(self):
@@ -149,23 +172,36 @@ class STARFrameworkStrategy(EvaluationStrategy):
     def evaluate(self, **kwargs) -> Dict[str, Any]:
         questions = kwargs.get("questions") or []
         answers = {a.get("question_id"): str(a.get("answer_text", "")).strip() for a in kwargs.get("answers", [])}
+        weights = kwargs.get("competency_weights") or {}
         if not questions:
             return {"success": False, "data": {}, "error": "NO_QUESTIONS"}
         scores: Dict[str, List[float]] = {}
+        names: Dict[str, str] = {}
         evidence = []
         any_star = False
         for question in questions:
             competency = question.get("competency_or_skill", "behavioral")
             key = re.sub(r"[^a-z0-9]+", "_", competency.lower()).strip("_")[:64] or "behavioral"
+            names[key] = competency
             text = answers.get(question.get("question_id"), "").lower()
             components = {part: any(marker in text for marker in markers) for part, markers in self.MARKERS.items()}
             detected = sum(components.values())
-            score = 40.0 if len(text.split()) < 10 else min(100.0, 40.0 + detected * 15.0)
+            words = len(text.split())
+            if words == 0:
+                score = 0.0
+            elif words < 10:
+                score = 20.0
+            else:
+                score = min(100.0, 30.0 + detected * 15.0 + (10.0 if words >= 60 else 0.0))
             any_star = any_star or detected >= 3
             scores.setdefault(key, []).append(score)
-            evidence.append(f"{competency}: {detected}/4 STAR components evident in response text.")
+            missing = [part.title() for part, present in components.items() if not present]
+            evidence.append(f"{competency}: {detected}/4 STAR components evident"
+                            + (f" (missing: {', '.join(missing)})." if missing else "."))
         breakdown = {key: round(sum(values) / len(values), 1) for key, values in scores.items()}
-        return {"success": True, "data": {"breakdown": breakdown, "score": round(sum(breakdown.values()) / len(breakdown), 1),
+        total_weight = sum(float(weights.get(names[key], 1.0) or 1.0) for key in breakdown)
+        overall = sum(breakdown[key] * float(weights.get(names[key], 1.0) or 1.0) for key in breakdown) / (total_weight or 1)
+        return {"success": True, "data": {"breakdown": breakdown, "score": round(overall, 1),
                 "star_detected": any_star, "evidence": evidence, "status": "COMPLETED"}}
 
 
@@ -180,11 +216,16 @@ class TemplateSynthesisStrategy(EvaluationStrategy):
         disagreements = kwargs.get("disagreements", [])
         score = kwargs.get("merged_score", 0)
         recommendation = kwargs.get("recommendation", "HUMAN_REVIEW_REQUIRED")
-        summary = f"Panel score: {score}/100. "
-        summary += f"Strengths: {'; '.join(strengths) if strengths else 'No major strengths were established.'} "
-        summary += f"Gaps: {'; '.join(gaps) if gaps else 'No major gaps were identified.'} "
-        summary += f"Review notes: {'; '.join(disagreements) if disagreements else 'Agent scores were aligned.'} "
-        summary += f"Routing: {recommendation}. A human reviewer makes the final decision."
+        routing = {"PROCEED_TO_HUMAN_REVIEW": "proceed to reviewer decision",
+                   "HUMAN_REVIEW_REQUIRED": "needs careful review",
+                   "ADDITIONAL_INFORMATION_REQUIRED": "incomplete evidence"}.get(recommendation, recommendation)
+
+        def join(items: List[str], empty: str) -> str:
+            return "; ".join(item.rstrip(". ") for item in items) + "." if items else empty
+
+        summary = (f"Panel score {score}/100 ({routing}). Strengths: {join(strengths, 'none above the strength threshold.')} "
+                   f"Gaps: {join(gaps, 'none below the gap threshold.')} "
+                   f"Notes: {join(disagreements, 'agent scores were consistent.')} A human reviewer makes the final decision.")
         factors = [f"Resume {kwargs.get('resume_score', 0)}/100",
                    f"Technical {kwargs.get('skill_score', 0)}/100",
                    f"Behavioral {kwargs.get('culture_score', 0)}/100"]
@@ -269,6 +310,11 @@ class StrategyChain:
 
 def configured_chain(strategy_map: Dict[str, EvaluationStrategy], default_order: Sequence[str],
                      agent_name: str, candidate_id: Optional[str] = None) -> StrategyChain:
+    from app.agents.llm_factory import llm_available
+    if not llm_available():
+        # No provider configured: skip the LLM rather than recording a guaranteed failure on every call.
+        strategy_map = {name: strategy for name, strategy in strategy_map.items() if name != "llm"}
+        default_order = [name for name in default_order if name != "llm"]
     configured = settings.FALLBACK_STRATEGY_CHAIN
     order = [name for name in configured if name in strategy_map]
     if not settings.ENABLE_HUMAN_EXPERT_FALLBACK:

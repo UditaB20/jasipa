@@ -1,141 +1,60 @@
+from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+
+from app.agents.question_generator import get_or_create_question_set
+from app.auth.security import require_hr
+from app.database.models import Assessment, JobDescription
 from app.database.session import get_db
-from app.database.models import Candidate, JobDescription, Assessment
-from app.schemas.assessment import (
-    TechnicalAssessmentSubmit, BehavioralAssessmentSubmit, 
-    SkillAssessorOutput, CultureFitOutput, AssessmentResponse
-)
-from app.services.assessment_service import (
-    generate_technical_questions_for_jd, 
-    generate_behavioral_questions_for_jd,
-    sanitize_questions_for_candidate
-)
-from app.agents.skill_assessor import SkillAssessorAgent
-from app.agents.culture_fit import CultureFitAgent
-from app.mcp.tools import ATSTools
+from app.schemas.assessment import AssessmentResponse
 from app.services.audit_service import log_event
-from app.auth.security import require_hr, get_current_user
+from app.services.rubric_service import get_or_create_rubric
 
 router = APIRouter(prefix="/assessments", tags=["Assessments"])
 
-@router.get("/questions/technical/{jd_id}")
-def get_technical_questions(jd_id: str, db: Session = Depends(get_db)):
+
+def _question_set_payload(question_set, rubric) -> dict:
+    return {"question_set_id": question_set.question_set_id, "jd_id": question_set.jd_id,
+            "rubric_version": question_set.rubric_version, "generator": question_set.generator,
+            "generation_notes": question_set.generation_notes or [],
+            "created_at": question_set.created_at.isoformat() if question_set.created_at else None,
+            "technical_questions": question_set.technical_questions or [],
+            "behavioral_questions": question_set.behavioral_questions or [],
+            "technical_weights": (rubric.criteria or {}).get("technical_scoring", {})}
+
+
+def _jd(db: Session, jd_id: str) -> JobDescription:
     jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
     if not jd:
         raise HTTPException(status_code=404, detail="Job description not found")
-    questions = generate_technical_questions_for_jd(jd)
-    return {"jd_id": jd_id, "test_type": "TECHNICAL", "questions": sanitize_questions_for_candidate(questions)}
+    return jd
 
-@router.get("/questions/behavioral/{jd_id}")
-def get_behavioral_questions(jd_id: str, db: Session = Depends(get_db)):
-    jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
-    if not jd:
-        raise HTTPException(status_code=404, detail="Job description not found")
-    questions = generate_behavioral_questions_for_jd(jd)
-    return {"jd_id": jd_id, "test_type": "BEHAVIORAL", "questions": sanitize_questions_for_candidate(questions)}
 
-@router.post("/submit/technical", response_model=SkillAssessorOutput)
-def submit_technical_assessment(
-    payload: TechnicalAssessmentSubmit, 
-    current_user: dict = Depends(require_hr),
-    db: Session = Depends(get_db)
-):
-    cand = db.query(Candidate).filter(Candidate.candidate_id == payload.candidate_id).first()
-    jd = db.query(JobDescription).filter(JobDescription.jd_id == payload.jd_id).first()
-    if not cand or not jd:
-        raise HTTPException(status_code=404, detail="Candidate or JD not found")
+@router.get("/questions/{jd_id}")
+def get_question_set(jd_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
+    """HR preview of the generated assessment, including answer keys and hidden tests."""
+    jd = _jd(db, jd_id)
+    rubric = get_or_create_rubric(db, jd)
+    return _question_set_payload(get_or_create_question_set(db, jd, rubric), rubric)
 
-    questions = generate_technical_questions_for_jd(jd)
-    answers_dict = [{"question_id": a.question_id, "answer_text": a.answer_text} for a in payload.answers]
 
-    # Evaluate with SkillAssessorAgent
-    skill_out = SkillAssessorAgent.evaluate(cand.candidate_id, jd.__dict__, questions, answers_dict)
+@router.post("/questions/{jd_id}/regenerate")
+def regenerate_question_set(jd_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
+    """Generates a fresh set for future applicants. Submitted assessments keep the questions they were given."""
+    jd = _jd(db, jd_id)
+    rubric = get_or_create_rubric(db, jd)
+    question_set = get_or_create_question_set(db, jd, rubric, force_new=True)
+    log_event(db, stage="QUESTIONS_GENERATED", event=f"Assessment regenerated for {jd.title}", agent="QuestionGenerationAgent",
+              input_reference={"jd_id": jd.jd_id, "rubric_version": rubric.version, "requested_by": current_user["email"]},
+              output={"question_set_id": question_set.question_set_id, "generator": question_set.generator,
+                      "technical": len(question_set.technical_questions or []), "behavioral": len(question_set.behavioral_questions or [])},
+              rubric_version=rubric.version, model_name=question_set.generator)
+    return _question_set_payload(question_set, rubric)
 
-    # Save through ATS Tool
-    ATSTools.save_assessment_result(
-        db,
-        candidate_id=cand.candidate_id,
-        jd_id=jd.jd_id,
-        test_type="TECHNICAL",
-        questions=questions,
-        answers=answers_dict,
-        score=skill_out.score,
-        skill_breakdown=skill_out.skill_breakdown,
-        evidence=skill_out.evidence,
-        confidence=skill_out.confidence,
-        status=skill_out.status
-    )
-
-    log_event(
-        db,
-        stage="TECHNICAL_ASSESSED",
-        event="Candidate Submitted Technical Assessment",
-        agent="SkillAssessorAgent",
-        candidate_id=cand.candidate_id,
-        input_reference={"jd_id": jd.jd_id, "answer_count": len(payload.answers)},
-        output=skill_out.model_dump(),
-        rubric_version=jd.rubric_version
-    )
-
-    return skill_out
-
-@router.post("/submit/behavioral", response_model=CultureFitOutput)
-def submit_behavioral_assessment(
-    payload: BehavioralAssessmentSubmit, 
-    current_user: dict = Depends(require_hr),
-    db: Session = Depends(get_db)
-):
-    cand = db.query(Candidate).filter(Candidate.candidate_id == payload.candidate_id).first()
-    jd = db.query(JobDescription).filter(JobDescription.jd_id == payload.jd_id).first()
-    if not cand or not jd:
-        raise HTTPException(status_code=404, detail="Candidate or JD not found")
-
-    questions = generate_behavioral_questions_for_jd(jd)
-    answers_dict = [{"question_id": a.question_id, "answer_text": a.answer_text} for a in payload.answers]
-
-    # Evaluate with CultureFitAgent
-    culture_out = CultureFitAgent.evaluate(cand.candidate_id, jd.__dict__, questions, answers_dict)
-
-    # Save through ATS Tool
-    ATSTools.save_assessment_result(
-        db,
-        candidate_id=cand.candidate_id,
-        jd_id=jd.jd_id,
-        test_type="BEHAVIORAL",
-        questions=questions,
-        answers=answers_dict,
-        score=culture_out.score,
-        skill_breakdown=culture_out.breakdown,
-        evidence=culture_out.evidence,
-        confidence=culture_out.confidence,
-        status=culture_out.status
-    )
-
-    log_event(
-        db,
-        stage="BEHAVIORAL_ASSESSED",
-        event="Candidate Submitted Behavioral Assessment",
-        agent="CultureFitAgent",
-        candidate_id=cand.candidate_id,
-        input_reference={"jd_id": jd.jd_id, "answer_count": len(payload.answers)},
-        output=culture_out.model_dump(),
-        rubric_version=jd.rubric_version
-    )
-
-    return culture_out
 
 @router.get("/candidate/{candidate_id}", response_model=List[AssessmentResponse])
-def get_candidate_assessments(
-    candidate_id: str, 
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    # Strict candidate data isolation: candidate can only view their own assessments
-    if current_user.get("role") != "HR" and current_user.get("candidate_id") != candidate_id:
-        raise HTTPException(
-            status_code=403, 
-            detail="Access forbidden: You cannot view assessments belonging to another candidate."
-        )
-    return db.query(Assessment).filter(Assessment.candidate_id == candidate_id).all()
+def get_candidate_assessments(candidate_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
+    """Submitted answers with scores and execution results. HR only: the records contain answer keys."""
+    return (db.query(Assessment).filter(Assessment.candidate_id == candidate_id)
+            .order_by(Assessment.completed_date.asc()).all())

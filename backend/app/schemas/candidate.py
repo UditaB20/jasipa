@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict
 from datetime import datetime
 from app.schemas.screening import ScreeningResultResponse
@@ -9,34 +9,36 @@ from app.schemas.review import HumanReviewResponse
 from app.schemas.audit import AuditLogResponse
 
 class CandidateBase(BaseModel):
-    name: str
-    email: str
-    phone: Optional[str] = None
-    cohort_tag: Optional[str] = "General Cohort"
-    experience_years: Optional[float] = 0.0
-    education: Optional[str] = None
+    name: str = Field(min_length=2, max_length=120)
+    email: str = Field(max_length=254)
+    phone: Optional[str] = Field(None, max_length=40)
+    cohort_tag: Optional[str] = Field(None, max_length=80)
+    experience_years: Optional[float] = Field(0.0, ge=0, le=60)
+    education: Optional[str] = Field(None, max_length=200)
     target_jd_id: Optional[str] = None
 
 class CandidateCreate(CandidateBase):
-    resume_text: Optional[str] = None
-    skills_extracted: Optional[List[str]] = []
+    resume_text: Optional[str] = Field(None, max_length=60000)
 
 class CandidateUpdate(BaseModel):
-    name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    cohort_tag: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=2, max_length=120)
+    email: Optional[str] = Field(None, max_length=254)
+    phone: Optional[str] = Field(None, max_length=40)
+    cohort_tag: Optional[str] = Field(None, max_length=80)
     current_stage: Optional[str] = None
     target_jd_id: Optional[str] = None
-    experience_years: Optional[float] = None
-    education: Optional[str] = None
-    resume_text: Optional[str] = None
+    experience_years: Optional[float] = Field(None, ge=0, le=60)
+    education: Optional[str] = Field(None, max_length=200)
+    resume_text: Optional[str] = Field(None, max_length=60000)
 
 class CandidateResponse(CandidateBase):
+    name: str
+    email: str
     candidate_id: str
     current_stage: str
     skills_extracted: List[str] = []
-    resume_file_path: Optional[str] = None
+    resume_original_filename: Optional[str] = None
+    resume_profile: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -44,6 +46,7 @@ class CandidateResponse(CandidateBase):
         from_attributes = True
 
 class CandidateDetailResponse(CandidateResponse):
+    resume_text: Optional[str] = None
     screening_results: List[ScreeningResultResponse] = []
     assessments: List[AssessmentResponse] = []
     panel_decisions: List[PanelDecisionResponse] = []

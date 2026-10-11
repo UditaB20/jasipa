@@ -3,12 +3,28 @@ from typing import List, Optional
 from datetime import datetime
 
 class JobDescriptionBase(BaseModel):
-    title: str
-    department: str = "Engineering"
-    description: str
-    required_skills: List[str]
-    preferred_skills: Optional[List[str]] = []
-    min_experience: Optional[int] = Field(default=2, ge=0, description="Minimum years of experience required (whole numbers >= 0)")
+    title: str = Field(min_length=3, max_length=150)
+    department: str = Field("Engineering", min_length=2, max_length=100)
+    description: str = Field(min_length=30, max_length=10000)
+    required_skills: List[str] = Field(min_length=1, max_length=25)
+    preferred_skills: Optional[List[str]] = Field(default_factory=list, max_length=25)
+
+    @field_validator("title", "department", "description")
+    @classmethod
+    def strip_text(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("required_skills", "preferred_skills")
+    @classmethod
+    def clean_skills(cls, v):
+        seen, cleaned = set(), []
+        for skill in v or []:
+            skill = " ".join(str(skill).split())[:60]
+            if skill and skill.lower() not in seen:
+                seen.add(skill.lower())
+                cleaned.append(skill)
+        return cleaned
+    min_experience: Optional[int] = Field(default=2, ge=0, le=40, description="Minimum years of experience required (whole numbers >= 0)")
     education_requirement: Optional[str] = "Bachelor's in Computer Science or related field"
 
     @field_validator("min_experience", mode="before")
@@ -17,7 +33,7 @@ class JobDescriptionBase(BaseModel):
         if v is None:
             return 0
         try:
-            return max(0, int(round(float(v))))
+            return max(0, min(40, int(round(float(v)))))
         except Exception:
             return 0
 

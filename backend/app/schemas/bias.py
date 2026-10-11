@@ -5,7 +5,7 @@ from datetime import datetime
 class BiasCheckOutput(BaseModel):
     candidate_id: str
     decision_id: str
-    flag_status: str # "FLAGGED" or "NO_SIGNIFICANT_DISPARITY_DETECTED"
+    flag_status: str # STATISTICALLY_SUPPORTED_DISPARITY | POTENTIAL_DISPARITY_INDICATOR | INSUFFICIENT_DATA | NO_INDICATOR_DETECTED
     reason: str
     cohort_breakdown: Dict[str, Any]
     requires_human_review: bool = True # Always True per project governance
@@ -24,17 +24,3 @@ class BiasCheckResponse(BiasCheckOutput):
     class Config:
         from_attributes = True
 
-class CohortMetric(BaseModel):
-    cohort_name: str
-    total_candidates: int
-    average_score: float
-    proceed_rate: float
-    flagged_disparity: bool
-
-class CohortAnalyticsResponse(BaseModel):
-    total_evaluated: int
-    cohorts: List[CohortMetric]
-    overall_disparity_ratio: float
-    disparity_detected: bool
-    flagged_candidates_count: int = 0
-    summary: str

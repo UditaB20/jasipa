@@ -1,317 +1,205 @@
-from typing import Dict, Any, List
-from datetime import datetime
-import re
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from app.database.models import Candidate, PanelDecision, BiasCheck, HiringOutcome
-from app.config import settings
+"""Bias checks attached to every panel decision.
 
-def _is_test_record(name: str, email: str, cohort: str | None) -> bool:
+Pool-level checks compare selection rates across cohorts at two points: the AI panel's routing
+recommendation and the final human decision. Each uses the small-sample-aware comparison in
+fairness_stats. A per-decision check looks for demographic language in the panel rationale.
+No check alters scores, routing or decisions; every result is shown to the human reviewer and
+stored with the panel decision in the audit log.
+"""
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+from sqlalchemy.orm import Session
+
+from app.database.models import BiasCheck, Candidate, HiringOutcome, HumanReview, PanelDecision
+from app.services.fairness_stats import (
+    SEVERITY, STATUS_INDICATOR, STATUS_INSUFFICIENT, STATUS_NONE, STATUS_SUPPORTED, compare_groups, is_missing_cohort,
+)
+
+
+def _is_test_record(name: str, email: str, cohort: Optional[str]) -> bool:
     value = f"{name} {email} {cohort or ''}".lower()
-    return any(re.search(rf"(?:^|[\W_.-]){marker}(?:$|[\W_.-])", value)
-               for marker in ("test", "demo", "mock", "e2e"))
+    return any(re.search(rf"(?:^|[\W_.-]){marker}(?:$|[\W_.-])", value) for marker in ("test", "demo", "mock", "e2e"))
+
+
+def _latest_panel_records(db: Session) -> Dict[str, Tuple[Optional[str], PanelDecision]]:
+    rows = db.query(Candidate, PanelDecision).join(PanelDecision, PanelDecision.candidate_id == Candidate.candidate_id).all()
+    latest: Dict[str, Tuple[Optional[str], PanelDecision]] = {}
+    for candidate, decision in rows:
+        if _is_test_record(candidate.name or "", candidate.email or "", candidate.cohort_tag):
+            continue
+        current = latest.get(candidate.candidate_id)
+        if current is None or (decision.created_at or datetime.min) > (current[1].created_at or datetime.min):
+            latest[candidate.candidate_id] = (candidate.cohort_tag, decision)
+    return latest
+
+
+def ai_recommendation_analysis(db: Session) -> Dict[str, Any]:
+    records = [(cohort, decision.recommendation == "PROCEED_TO_HUMAN_REVIEW") for cohort, decision in _latest_panel_records(db).values()]
+    return {"stage": "ai_recommendation",
+            **compare_groups(records, "the panel recommended Proceed (latest panel run per candidate)")}
+
+
+def human_decision_analysis(db: Session) -> Dict[str, Any]:
+    rows = db.query(Candidate, HumanReview).join(HumanReview, HumanReview.candidate_id == Candidate.candidate_id).filter(
+        HumanReview.decision.in_(["APPROVE", "REJECT"])).all()
+    latest: Dict[str, Tuple[Optional[str], HumanReview]] = {}
+    for candidate, review in rows:
+        if review.is_final is False or _is_test_record(candidate.name or "", candidate.email or "", candidate.cohort_tag):
+            continue
+        current = latest.get(candidate.candidate_id)
+        if current is None or (review.timestamp or datetime.min) > (current[1].timestamp or datetime.min):
+            latest[candidate.candidate_id] = (candidate.cohort_tag, review)
+    records = [(cohort, review.decision == "APPROVE") for cohort, review in latest.values()]
+    return {"stage": "human_decision", **compare_groups(records, "the final human decision was Approve (latest final decision per candidate)")}
+
 
 def calculate_cohort_analytics(db: Session) -> Dict[str, Any]:
-    """
-    Computes statistical cohort distributions across all candidates who received panel evaluations.
-    Applies statistical parity / the 4/5ths (80%) disparate impact standard.
-    """
-    # Join candidates with their latest panel decisions
-    raw_records = db.query(
-        Candidate.cohort_tag,
-        Candidate.candidate_id,
-        Candidate.name,
-        Candidate.email,
-        PanelDecision.merged_score,
-        PanelDecision.recommendation,
-        PanelDecision.created_at
-    ).join(PanelDecision, Candidate.candidate_id == PanelDecision.candidate_id).all()
-    # Compare one current evaluation per candidate so repeated workflow runs do not
-    # overweight candidates with more panel records.
-    latest = {}
-    for tag, candidate_id, name, email, score, recommendation, created_at in raw_records:
-        if _is_test_record(name or "", email or "", tag):
-            continue
-        if candidate_id not in latest or (created_at or datetime.min) > (latest[candidate_id][6] or datetime.min):
-            latest[candidate_id] = (tag, candidate_id, name, email, score, recommendation, created_at)
-    records = [(row[0], row[1], row[4], row[5]) for row in latest.values()]
-
-    if not records:
-        return {
-            "total_evaluated": 0,
-            "cohorts": [],
-            "overall_disparity_ratio": 1.0,
-            "disparity_detected": False,
-            "summary": "Insufficient cohort data for historical statistical parity assessment."
-        }
-
-    cohort_data = {}
-    for tag, c_id, score, rec in records:
-        cohort = tag or "General Cohort"
-        if cohort not in cohort_data:
-            cohort_data[cohort] = {
-                "cohort_name": cohort,
-                "scores": [],
-                "proceed_count": 0,
-                "total": 0
-            }
-        cohort_data[cohort]["scores"].append(score or 0.0)
-        cohort_data[cohort]["total"] += 1
-        if rec == "PROCEED_TO_HUMAN_REVIEW":
-            cohort_data[cohort]["proceed_count"] += 1
-
-    cohort_metrics = []
-    max_proceed_rate = 0.0
-    for cohort, data in cohort_data.items():
-        total = data["total"]
-        avg_score = round(sum(data["scores"]) / total, 1) if total > 0 else 0.0
-        proceed_rate = round(data["proceed_count"] / total, 2) if total > 0 else 0.0
-        if proceed_rate > max_proceed_rate:
-            max_proceed_rate = proceed_rate
-
-        cohort_metrics.append({
-            "cohort_name": cohort,
-            "total_candidates": total,
-            "average_score": avg_score,
-            "proceed_rate": proceed_rate,
-            "flagged_disparity": False
-        })
-
-    # Apply 4/5ths rule (80% ratio of highest selection rate)
-    disparity_detected = False
-    min_ratio = 1.0
-    for c in cohort_metrics:
-        if max_proceed_rate > 0:
-            ratio = c["proceed_rate"] / max_proceed_rate
-            if ratio < settings.BIAS_DISPARITY_THRESHOLD and c["total_candidates"] >= 2:
-                c["flagged_disparity"] = True
-                disparity_detected = True
-            min_ratio = min(min_ratio, ratio)
-
-    summary = (
-        "Potential disparity detected: One or more cohort recommendation rates fall below the 80% parity threshold. Human Reviewer flagged."
-        if disparity_detected
-        else "No significant disparity detected across evaluated cohorts. All selection rates comply with parity thresholds."
-    )
-
-    flagged_count = db.query(BiasCheck).filter(BiasCheck.flag_status == "FLAGGED").count()
-
+    """Pool-level view for the bias monitor page."""
+    ai = ai_recommendation_analysis(db)
+    human = human_decision_analysis(db)
+    checks = db.query(BiasCheck.flag_status).all()
+    by_status: Dict[str, int] = {}
+    for (status,) in checks:
+        by_status[status] = by_status.get(status, 0) + 1
     return {
-        "total_evaluated": len(records),
-        "cohorts": cohort_metrics,
-        "overall_disparity_ratio": round(min_ratio, 2),
-        "disparity_detected": disparity_detected,
-        "flagged_candidates_count": flagged_count,
-        "summary": summary
+        "ai_recommendation": ai,
+        "human_decision": human,
+        "overall_status": max((ai["overall_status"], human["overall_status"]), key=lambda s: SEVERITY[s]),
+        "bias_checks_recorded": len(checks),
+        "bias_checks_by_status": by_status,
+        "method": {
+            "impact_ratio": "Cohort selection rate divided by the highest rate among cohorts with enough candidates (four-fifths screen).",
+            "significance": "Two-sided Fisher's exact test of each cohort against all other candidates with a recorded cohort.",
+            "interval": "Wilson 95% interval for each selection rate.",
+            "interpretation": "A potential disparity indicator is a screening signal. Only a ratio below the screen with a significant test "
+                              "is reported as statistically supported. A non-significant result does not show that bias is absent.",
+        },
     }
 
-def evaluate_bias_for_candidate(
-    db: Session, 
-    candidate_id: str, 
-    decision_id: str
-) -> Dict[str, Any]:
-    """
-    Evaluates historical cohort statistics and tags the individual candidate evaluation with a bias audit record.
-    """
-    candidate = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
-    result = comprehensive_bias_check(db, candidate_id, decision_id)
-    # Keep the legacy contract for callers while storing the complete audit in the breakdown.
-    result["cohort_breakdown"] = {**result, "statistical_analytics": calculate_cohort_analytics(db),
-                                  "candidate_cohort": candidate.cohort_tag if candidate else "General Cohort"}
+
+def _candidate_group(analysis: Dict[str, Any], cohort: Optional[str]) -> Optional[Dict[str, Any]]:
+    if is_missing_cohort(cohort):
+        return None
+    return next((group for group in analysis["groups"] if group["cohort_name"] == str(cohort).strip()), None)
+
+
+def check_selection_rate(analysis: Dict[str, Any], cohort: Optional[str], check_type: str, label: str) -> Dict[str, Any]:
+    group = _candidate_group(analysis, cohort)
+    if group is None:
+        status = STATUS_INSUFFICIENT
+        reason = (f"{label}: the candidate has no recorded cohort, so their group cannot be compared."
+                  if is_missing_cohort(cohort) else f"{label}: no comparable records for cohort {cohort}.")
+    else:
+        status = group["status"] if group["status"] in SEVERITY and group["status"] != "REFERENCE_GROUP" else STATUS_NONE
+        reason = f"{label} — cohort {group['cohort_name']} (n={group['n']}): " + " ".join(group["notes"])
+    # The pool-wide status matters too: other cohorts may be disadvantaged even if this candidate's is not.
+    if SEVERITY[analysis["overall_status"]] > SEVERITY[status] and analysis["overall_status"] in (STATUS_SUPPORTED, STATUS_INDICATOR):
+        reason += f" Pool-wide: {analysis['summary']}"
+        status = analysis["overall_status"]
+    return {"check_type": check_type, "flag_status": status, "reason": reason, "cohort": cohort,
+            "group": group, "pool_status": analysis["overall_status"], "sample_size": group["n"] if group else 0}
+
+
+def check_outcome_based_fairness(db: Session, candidate: Optional[Candidate]) -> Dict[str, Any]:
+    rows = db.query(Candidate, HiringOutcome).join(HiringOutcome, HiringOutcome.candidate_id == Candidate.candidate_id).filter(
+        HiringOutcome.performance_rating.isnot(None)).all()
+    records = [(c.cohort_tag, float(o.performance_rating) >= 3.5) for c, o in rows
+               if not _is_test_record(c.name or "", c.email or "", c.cohort_tag)]
+    analysis = compare_groups(records, "manager-reported performance rating of at least 3.5/5")
+    result = check_selection_rate(analysis, candidate.cohort_tag if candidate else None, "outcome_based_fairness", "Post-hire outcomes")
+    result["success_definition"] = "performance_rating >= 3.5/5"
     return result
 
 
-def _confidence(sample_size: int) -> str:
-    if sample_size < 10:
-        return "low"
-    if sample_size < 30:
-        return "medium"
-    return "high"
-
-
-def check_statistical_disparate_impact(db: Session, candidate_id: str, decision_id: str) -> Dict[str, Any]:
-    analytics = calculate_cohort_analytics(db)
-    candidate = db.query(Candidate).filter_by(candidate_id=candidate_id).first()
-    cohort_name = (candidate.cohort_tag if candidate else None) or "General Cohort"
-    metric = next((row for row in analytics["cohorts"] if row["cohort_name"] == cohort_name), None)
-    reference = max(analytics["cohorts"], key=lambda row: row["proceed_rate"], default=None)
-    z_score = None
-    impact_ratio = 1.0
-    if metric and reference and metric["total_candidates"] and reference["total_candidates"]:
-        impact_ratio = metric["proceed_rate"] / reference["proceed_rate"] if reference["proceed_rate"] else (1.0 if metric["proceed_rate"] == 0 else None)
-        n1, n2 = metric["total_candidates"], reference["total_candidates"]
-        p1, p2 = metric["proceed_rate"], reference["proceed_rate"]
-        pooled = (p1 * n1 + p2 * n2) / (n1 + n2)
-        se = (pooled * (1 - pooled) * (1 / n1 + 1 / n2)) ** 0.5
-        z_score = round((p1 - p2) / se, 3) if se else (0.0 if p1 == p2 else None)
-    flagged = bool(metric and metric["flagged_disparity"])
-    sample = metric["total_candidates"] if metric else 0
-    if sample < 10:
-        status = "INSUFFICIENT_DATA"
-        reason = f"Only {sample} evaluated records are available for cohort {cohort_name}; comparison is low confidence."
-    else:
-        status = "WARNING" if flagged else "CLEARED"
-        reason = (f"Observed recommendation-rate ratio is {impact_ratio:.2f}, below the configured 4/5ths screen." if flagged and impact_ratio is not None
-                  else "No disparate-impact ratio below the configured 4/5ths screen was observed." if not flagged
-                  else "Reference selection rate is zero; an impact ratio cannot be computed.")
-    return {"check_type": "statistical_disparate_impact", "flag_status": status, "reason": reason,
-            "z_score": z_score, "impact_ratio": impact_ratio, "sample_size": sample,
-            "cohort_breakdown": analytics}
-
-
-def check_outcome_based_fairness(db: Session, candidate_id: str) -> Dict[str, Any]:
-    candidate = db.query(Candidate).filter_by(candidate_id=candidate_id).first()
-    target = (candidate.cohort_tag if candidate else None) or "General Cohort"
-    records = db.query(Candidate.cohort_tag, Candidate.name, Candidate.email,
-                       HiringOutcome.performance_rating).join(
-        HiringOutcome, HiringOutcome.candidate_id == Candidate.candidate_id
-    ).filter(HiringOutcome.performance_rating.isnot(None)).all()
-    groups: Dict[str, List[float]] = {}
-    for cohort, name, email, rating in records:
-        if _is_test_record(name or "", email or "", cohort):
-            continue
-        name = cohort or "General Cohort"
-        groups.setdefault(name, []).append(float(rating))
-    reference_name = max(groups, key=lambda name: len(groups[name]), default=None)
-    cohort_ratings = groups.get(target, [])
-    reference_ratings = groups.get(reference_name, []) if reference_name else []
-    cohort_success = sum(rating >= 3.5 for rating in cohort_ratings) / len(cohort_ratings) if cohort_ratings else None
-    reference_success = sum(rating >= 3.5 for rating in reference_ratings) / len(reference_ratings) if reference_ratings else None
-    impact = cohort_success / reference_success if cohort_success is not None and reference_success not in (None, 0) else None
-    sample = len(cohort_ratings)
-    if sample < 10 or len(reference_ratings) < 10 or reference_success in (None, 0):
-        status = "INSUFFICIENT_DATA"
-        reason = f"Outcome comparison needs at least 10 rated hires in both cohorts; target n={sample}, reference n={len(reference_ratings)}."
-    elif impact is not None and impact < settings.BIAS_DISPARITY_THRESHOLD:
-        status = "WARNING"
-        reason = f"Recorded success rate for cohort {target} is {impact:.0%} of reference cohort {reference_name}, below the 4/5ths screen."
-    else:
-        status = "CLEARED"
-        reason = f"Recorded outcome success rate is not below the 4/5ths screen relative to {reference_name}."
-    return {"check_type": "outcome_based_fairness", "flag_status": status, "reason": reason,
-            "impact_ratio": round(impact, 3) if impact is not None else None,
-            "cohort_success": round(cohort_success, 3) if cohort_success is not None else None,
-            "ref_success": round(reference_success, 3) if reference_success is not None else None,
-            "cohort": target, "reference_cohort": reference_name, "sample_size": sample,
-            "reference_sample_size": len(reference_ratings), "success_definition": "performance_rating >= 3.5/5"}
-
-
 def check_threshold_bias(db: Session) -> Dict[str, Any]:
-    records = db.query(Candidate.cohort_tag, Candidate.candidate_id, Candidate.name, Candidate.email,
-                       PanelDecision.merged_score, PanelDecision.recommendation, PanelDecision.created_at).join(
-        PanelDecision, PanelDecision.candidate_id == Candidate.candidate_id
-    ).all()
-    latest = {}
-    for row in records:
-        cohort, candidate_id, name, email, score, recommendation, created_at = row
-        if _is_test_record(name or "", email or "", cohort):
-            continue
-        if candidate_id not in latest or (created_at or datetime.min) > (latest[candidate_id][6] or datetime.min):
-            latest[candidate_id] = row
-    total_by_cohort: Dict[str, int] = {}
     proceed_scores: Dict[str, List[float]] = {}
-    for cohort, _, _, _, score, recommendation, _ in latest.values():
-        name = cohort or "General Cohort"
-        total_by_cohort[name] = total_by_cohort.get(name, 0) + 1
-        if recommendation == "PROCEED_TO_HUMAN_REVIEW":
-            proceed_scores.setdefault(name, []).append(float(score))
-    thresholds = {name: {"observed_minimum_proceed_score": round(min(scores), 1),
-                         "proceed_count": len(scores), "evaluated_count": total_by_cohort.get(name, 0)}
-                  for name, scores in proceed_scores.items() if scores}
-    comparable = [row["observed_minimum_proceed_score"] for row in thresholds.values() if row["evaluated_count"] >= 10]
+    totals: Dict[str, int] = {}
+    for cohort, decision in _latest_panel_records(db).values():
+        if is_missing_cohort(cohort):
+            continue
+        totals[cohort] = totals.get(cohort, 0) + 1
+        if decision.recommendation == "PROCEED_TO_HUMAN_REVIEW":
+            proceed_scores.setdefault(cohort, []).append(float(decision.merged_score))
+    floors = {name: {"observed_minimum_proceed_score": round(min(scores), 1), "proceed_count": len(scores),
+                     "evaluated_count": totals.get(name, 0)} for name, scores in proceed_scores.items()}
+    comparable = [row["observed_minimum_proceed_score"] for row in floors.values() if row["evaluated_count"] >= 10]
     variance = round(max(comparable) - min(comparable), 1) if len(comparable) >= 2 else None
-    if len(comparable) < 2:
-        status = "INSUFFICIENT_DATA"
-        reason = "Need at least 10 evaluated candidates in two cohorts with proceed recommendations to compare observed score floors."
-    elif variance is not None and variance > 10:
-        status = "WARNING"
-        reason = "Observed minimum proceed scores differ by more than 10 points; this is a screening signal, not proof of different thresholds."
+    if variance is None:
+        status, reason = STATUS_INSUFFICIENT, "Score floors need at least 10 evaluated candidates in two cohorts to compare."
+    elif variance > 10:
+        status, reason = STATUS_INDICATOR, ("Observed minimum proceed scores differ by more than 10 points between cohorts. "
+                                            "This is a screening signal, not proof that different thresholds were applied.")
     else:
-        status = "CLEARED"
-        reason = "Observed minimum proceed scores are within 10 points across adequately sized cohorts."
-    return {"check_type": "threshold_bias", "flag_status": status, "reason": reason,
-            "thresholds_by_cohort": thresholds, "variance": variance,
-            "sample_size": sum(total_by_cohort.values())}
+        status, reason = STATUS_NONE, "Observed minimum proceed scores are within 10 points across adequately sized cohorts."
+    return {"check_type": "threshold_consistency", "flag_status": status, "reason": reason,
+            "thresholds_by_cohort": floors, "variance": variance, "sample_size": sum(totals.values())}
 
 
-def check_decision_counterfactual_fairness(db: Session, candidate_id: str, decision_id: str) -> Dict[str, Any]:
-    """
-    Per-decision counterfactual and proxy leakage audit run directly against the candidate's merged decision.
-    Verifies that the panel decision is anchored strictly to demonstrable rubric skills rather than
-    demographic proxies (gendered markers, age markers, or non-functional pedigree biases).
-    """
-    cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
-    decision = db.query(PanelDecision).filter(PanelDecision.decision_id == decision_id).first()
-    if not cand or not decision:
-        return {
-            "check_type": "decision_counterfactual_fairness",
-            "flag_status": "INSUFFICIENT_DATA",
-            "reason": "Missing candidate or panel decision records for per-decision audit.",
-            "sample_size": 0
-        }
+GENDER_CUES = ["she", "he", "her", "his", "him", "hers", "mrs", "mr", "ms", "female", "male", "woman", "man", "girl", "boy"]
+OTHER_CUES = ["recent graduate", "overqualified", "too senior", "too old", "too young", "mature", "young", "pregnan",
+              "maternity", "religio", "nationality", "native speaker", "accent", "married", "children", "disabilit"]
 
-    evidence_text = " ".join((decision.evidence or []) + (decision.strengths or []) + (decision.gaps or [])).lower()
-    
-    # 1. Demographic & gendered proxy leakage check in panel rationale
-    gender_cues = ["she", "he", "her", "his", "him", "mrs", "mr", "female", "male", "woman", "man"]
-    detected_gender_cues = [word for word in gender_cues if re.search(rf"\b{word}\b", evidence_text)]
-    
-    # 2. Age proxy indicators in evaluation
-    age_cues = [term for term in ["recent graduate", "overqualified", "too senior", "mature", "young"] if term in evidence_text]
-    
-    # 3. Hidden Gem Parity: If technical test is high, verify candidate was not unfairly downgraded on pedigree
-    is_hidden_gem = decision.skill_score >= 75 and decision.resume_score < 60
 
-    flags = []
-    if detected_gender_cues:
-        flags.append(f"Gendered language cues detected in panel rationale: {', '.join(set(detected_gender_cues))}")
-    if age_cues:
-        flags.append(f"Potential age proxy terms detected in evaluation: {', '.join(age_cues)}")
-
-    status = "WARNING" if flags else "CLEARED"
-    if status == "WARNING":
-        reason = "; ".join(flags)
-    elif is_hidden_gem:
-        reason = "Counterfactual parity confirmed: Demonstrated practical skills appropriately recognized despite non-traditional resume pedigree."
-    else:
-        reason = "Decision-level fairness audit passed: Panel synthesis is anchored strictly to rubric skills with zero detected demographic proxy leakage."
-
-    return {
-        "check_type": "decision_counterfactual_fairness",
-        "flag_status": status,
-        "reason": reason,
-        "detected_proxy_markers": detected_gender_cues + age_cues,
-        "hidden_gem_validated": is_hidden_gem,
-        "skill_vs_resume_divergence": round(abs(decision.resume_score - decision.skill_score), 1),
-        "counterfactual_parity_score": 0.95 if status == "CLEARED" else 0.70,
-        "sample_size": 1
-    }
+def check_decision_language(db: Session, decision: Optional[PanelDecision]) -> Dict[str, Any]:
+    """Looks for demographic or proxy language in the panel's rationale for this specific decision."""
+    if not decision:
+        return {"check_type": "decision_rationale_language", "flag_status": STATUS_INSUFFICIENT,
+                "reason": "Panel decision record not found.", "sample_size": 0}
+    text = " ".join((decision.evidence or []) + (decision.strengths or []) + (decision.gaps or [])
+                    + (decision.disagreements or []) + [decision.natural_language_summary or ""]).lower()
+    found = [w for w in GENDER_CUES if re.search(rf"\b{w}\b", text)] + [w for w in OTHER_CUES if w in text]
+    if found:
+        return {"check_type": "decision_rationale_language", "flag_status": STATUS_INDICATOR,
+                "reason": f"Panel rationale contains demographic or proxy language: {', '.join(sorted(set(found)))}. "
+                          "The reviewer should confirm the recommendation rests on job-related evidence only.",
+                "detected_terms": sorted(set(found)), "sample_size": 1}
+    return {"check_type": "decision_rationale_language", "flag_status": STATUS_NONE,
+            "reason": "No demographic or proxy language was found in the panel rationale.", "detected_terms": [], "sample_size": 1}
 
 
 def comprehensive_bias_check(db: Session, candidate_id: str, decision_id: str) -> Dict[str, Any]:
+    candidate = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
+    decision = db.query(PanelDecision).filter(PanelDecision.decision_id == decision_id).first()
+    cohort = candidate.cohort_tag if candidate else None
+    ai = ai_recommendation_analysis(db)
+    human = human_decision_analysis(db)
     checks = [
-        check_decision_counterfactual_fairness(db, candidate_id, decision_id),
-        check_statistical_disparate_impact(db, candidate_id, decision_id),
-        check_outcome_based_fairness(db, candidate_id), 
-        check_threshold_bias(db)
+        check_decision_language(db, decision),
+        check_selection_rate(ai, cohort, "selection_rate_ai_recommendation", "AI panel recommendations"),
+        check_selection_rate(human, cohort, "selection_rate_human_decision", "Final human decisions"),
+        check_outcome_based_fairness(db, candidate),
+        check_threshold_bias(db),
     ]
-    overall_flag = any(check["flag_status"] == "WARNING" for check in checks)
-    incomplete = any(check["flag_status"] == "INSUFFICIENT_DATA" for check in checks)
-    sample_size = max((check["sample_size"] for check in checks), default=0)
-    confidence = "high" if checks[0]["flag_status"] == "CLEARED" and not overall_flag else "low" if incomplete else _confidence(sample_size)
+    overall = max((c["flag_status"] for c in checks), key=lambda s: SEVERITY.get(s, 0))
+    supported = [c for c in checks if c["flag_status"] == STATUS_SUPPORTED]
+    indicators = [c for c in checks if c["flag_status"] == STATUS_INDICATOR]
+    insufficient = [c for c in checks if c["flag_status"] == STATUS_INSUFFICIENT]
+    if supported:
+        reason = " ".join(c["reason"] for c in supported)
+    elif indicators:
+        reason = " ".join(c["reason"] for c in indicators)
+    elif insufficient:
+        reason = (f"{len(insufficient)} of {len(checks)} checks lack enough data for a reliable comparison; "
+                  "this is not evidence that the process is fair. Remaining checks found no indicators.")
+    else:
+        reason = "No disparity indicators were found. Small samples limit how much this rules out."
+
     recommendations = []
-    if overall_flag:
-        recommendations.append("Review the flagged cohort comparison with HR and validate data quality before changing evaluation criteria.")
-    if incomplete:
-        recommendations.append("Collect more comparable outcomes and evaluation records; insufficient data is not evidence of fairness.")
+    if supported:
+        recommendations.append("Escalate to HR leadership: review the affected stage, criteria and data quality before further decisions.")
+    if indicators:
+        recommendations.append("Review the indicator with the evidence before deciding; confirm the decision rests on job-related evidence.")
+    if insufficient:
+        recommendations.append("Record cohort data consistently and keep monitoring as more decisions accumulate.")
     if not recommendations:
-        recommendations.append("Continue monitoring cohort-level outcomes; no automated hiring action is taken from these checks.")
-    flags = [check for check in checks if check["flag_status"] == "WARNING"]
-    reason = "; ".join(check["reason"] for check in flags) if flags else (
-        "Decision-level counterfactual check cleared. Cohort aggregations under ongoing monitoring." if not incomplete else "Per-decision fairness check cleared; historical cohort sample size remains small.")
-    legacy_status = "FLAGGED" if overall_flag else "NO_SIGNIFICANT_DISPARITY_DETECTED"
-    return {"candidate_id": candidate_id, "decision_id": decision_id, "flag_status": legacy_status,
-            "reason": reason, "checks": checks, "overall_flag": overall_flag,
-            "recommendations": recommendations, "confidence_level": confidence,
-            "sample_size": sample_size, "action_required": overall_flag or incomplete,
-            "requires_human_review": True}
+        recommendations.append("Continue routine monitoring; no automated action is taken from these checks.")
+
+    sample = max((c.get("sample_size") or 0 for c in checks), default=0)
+    confidence = "low" if sample < 10 else "medium" if sample < 30 else "high"
+    return {"candidate_id": candidate_id, "decision_id": decision_id, "flag_status": overall, "reason": reason,
+            "checks": checks, "overall_flag": overall in (STATUS_SUPPORTED, STATUS_INDICATOR),
+            "recommendations": recommendations, "confidence_level": confidence, "sample_size": sample,
+            "action_required": overall != STATUS_NONE, "requires_human_review": True,
+            "candidate_cohort": cohort, "pool": {"ai_recommendation": ai, "human_decision": human}}

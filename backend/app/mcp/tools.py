@@ -7,6 +7,7 @@ from app.database.models import (
 )
 
 STAGE_RANKS = {
+    "REGISTERED": 0,
     "APPLIED": 1,
     "MANUAL_REVIEW_REQUIRED": 1,
     "RESUME_SCREENED": 2,
@@ -14,9 +15,14 @@ STAGE_RANKS = {
     "BEHAVIORAL_ASSESSED": 4,
     "PANEL_EVALUATED": 5,
     "BIAS_CHECKED": 6,
+    "INFO_REQUESTED": 5,
     "HUMAN_REVIEW_PENDING": 6,
     "DECIDED": 7
 }
+
+# The panel may only route candidates to a human; it can never reject or hire.
+ALLOWED_RECOMMENDATIONS = {"PROCEED_TO_HUMAN_REVIEW", "HUMAN_REVIEW_REQUIRED", "ADDITIONAL_INFORMATION_REQUIRED"}
+HUMAN_DECISIONS = {"APPROVE", "REJECT", "REQUEST_MORE_INFORMATION"}
 
 def advance_stage_if_higher(candidate: Candidate, target_stage: str):
     """
@@ -45,7 +51,6 @@ class ATSTools:
             "candidate_id": cand.candidate_id,
             "name": cand.name,
             "email": cand.email,
-            "cohort_tag": cand.cohort_tag,
             "resume_text": cand.resume_text,
             "skills_extracted": cand.skills_extracted or [],
             "experience_years": cand.experience_years,
@@ -192,8 +197,11 @@ class ATSTools:
         used_llm_synthesis: bool = False,
         synthesis_latency_ms: int = 0,
         synthesis_strategy: str = "template",
-        synthesis_error: Optional[str] = None
+        synthesis_error: Optional[str] = None,
+        round_number: Optional[int] = None
     ) -> Dict[str, Any]:
+        if recommendation not in ALLOWED_RECOMMENDATIONS:
+            raise ValueError(f"Recommendation '{recommendation}' is not allowed; the panel can only route to human review.")
         decision = PanelDecision(
             candidate_id=candidate_id,
             jd_id=jd_id,
@@ -215,7 +223,8 @@ class ATSTools:
             used_llm_synthesis=used_llm_synthesis,
             synthesis_latency_ms=synthesis_latency_ms,
             synthesis_strategy=synthesis_strategy,
-            synthesis_error=synthesis_error
+            synthesis_error=synthesis_error,
+            round_number=round_number
         )
         db.add(decision)
         
@@ -272,8 +281,13 @@ class ATSTools:
         decision: str,
         notes: str,
         decision_id: Optional[str] = None,
-        bias_check_id: Optional[str] = None
+        bias_check_id: Optional[str] = None,
+        is_final: bool = True
     ) -> Dict[str, Any]:
+        """Records a human reviewer's decision. Only the authenticated /reviews/decide endpoint calls this;
+        it is deliberately not exposed as an MCP tool."""
+        if decision not in HUMAN_DECISIONS:
+            raise ValueError(f"Unknown decision '{decision}'.")
         review = HumanReview(
             candidate_id=candidate_id,
             decision_id=decision_id,
@@ -282,13 +296,15 @@ class ATSTools:
             reviewer_name=reviewer_name,
             decision=decision,
             notes=notes,
+            is_final=is_final,
             timestamp=datetime.utcnow()
         )
         db.add(review)
-        
+
         cand = db.query(Candidate).filter(Candidate.candidate_id == candidate_id).first()
-        if cand:
-            cand.current_stage = "DECIDED"
+        if cand and is_final:
+            # More information keeps the application open; only APPROVE/REJECT close it.
+            cand.current_stage = "INFO_REQUESTED" if decision == "REQUEST_MORE_INFORMATION" else "DECIDED"
             
         db.commit()
         db.refresh(review)
@@ -298,7 +314,8 @@ class ATSTools:
             "decision_id": decision_id,
             "bias_check_id": bias_check_id,
             "decision": decision,
-            "reviewer": reviewer_name
+            "reviewer": reviewer_name,
+            "is_final": is_final
         }
 
     @staticmethod
@@ -307,7 +324,8 @@ class ATSTools:
         if not cand:
             return {"error": "Candidate not found"}
             
-        logs = db.query(AuditLog).filter(AuditLog.candidate_id == candidate_id).order_by(AuditLog.timestamp.asc()).all()
+        logs = (db.query(AuditLog).filter(AuditLog.candidate_id == candidate_id)
+                .order_by(AuditLog.seq.asc().nullsfirst(), AuditLog.timestamp.asc()).all())
         return {
             "candidate_id": candidate_id,
             "name": cand.name,
@@ -321,6 +339,7 @@ class ATSTools:
                     "input_reference": l.input_reference,
                     "output": l.output,
                     "rubric_version": l.rubric_version,
+                    "model_name": l.model_name,
                     "timestamp": l.timestamp.isoformat()
                 }
                 for l in logs

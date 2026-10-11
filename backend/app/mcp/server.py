@@ -180,6 +180,8 @@ class MCPServer:
                 rubric_version=arguments.get("rubric_version", "1.0")
             )
         elif name == "save_bias_check":
+            if arguments.get("requires_human_review") is False:
+                raise ValueError("Bias checks always require human review.")
             return ATSTools.save_bias_check(
                 db,
                 decision_id=arguments["decision_id"],
@@ -187,7 +189,7 @@ class MCPServer:
                 flag_status=arguments["flag_status"],
                 reason=arguments.get("reason", ""),
                 cohort_breakdown=arguments.get("cohort_breakdown", {}),
-                requires_human_review=arguments.get("requires_human_review", True)
+                requires_human_review=True
             )
         elif name == "get_candidate_history":
             return ATSTools.get_candidate_history(db, arguments.get("candidate_id"))

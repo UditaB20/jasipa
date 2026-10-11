@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.agents.base_agent import LLMStrategy, StrategyChain, TemplateSynthesisStrategy
 from app.config import panel_coordinator_config
 from app.schemas.screening import ResumeScreeningOutput
@@ -11,8 +11,8 @@ class PanelCoordinatorAgent:
     Calculates rubric-weighted merged score and identifies strengths, gaps, and perspective divergences.
     
     ARCHITECTURE:
-    - Deterministic Execution: Pure Python weighted merge algorithm with zero LLM dependency.
-      Guarantees exact mathematical repeatability and full auditability without stochastic variance.
+    - Deterministic routing: scores are merged with the rubric weights in plain Python. An optional LLM
+      may only rephrase the already-computed facts into a summary; it cannot change scores or routing.
     - Tool Use: This agent does NOT call MCP tools directly. It returns PanelDecisionOutput.
       The LangGraph panel_node calls ATSTools.save_panel_decision() after synthesis completes.
     - Governance Rule:
@@ -26,7 +26,8 @@ class PanelCoordinatorAgent:
         rubric_data: Dict[str, Any],
         screening: ResumeScreeningOutput,
         technical: SkillAssessorOutput,
-        behavioral: CultureFitOutput
+        behavioral: CultureFitOutput,
+        history: Optional[List[Dict[str, Any]]] = None
     ) -> PanelDecisionOutput:
         jd_id = jd_data.get("jd_id", "JD001")
         rubric_version = rubric_data.get("version", "1.0")
@@ -57,33 +58,39 @@ class PanelCoordinatorAgent:
         if r_score >= 80:
             strengths.append(f"Strong resume alignment ({r_score}/100) matching core JD requirements: {', '.join(screening.matched_requirements[:3])}.")
         if s_score >= 80:
-            strengths.append(f"Demonstrated technical mastery ({s_score}/100) across practical assessment questions.")
+            strengths.append(f"Strong demonstrated technical performance ({s_score}/100) on the practical assessment.")
         if c_score >= 80:
-            strengths.append(f"High competency score ({c_score}/100) in structured STAR behavioral assessment.")
+            strengths.append(f"Strong structured (STAR) behavioral evidence ({c_score}/100).")
 
         # 2. Gaps synthesis
         if screening.missing_requirements:
             gaps.append(f"Missing JD requirements in resume: {', '.join(screening.missing_requirements)}.")
-        if s_score < 70 and technical.status != "INSUFFICIENT_EVIDENCE":
+        if s_score < 70 and technical.status == "COMPLETED":
             gaps.append(f"Technical assessment score ({s_score}/100) falls below recommended target threshold (70/100).")
-        if c_score < 70 and behavioral.status != "INSUFFICIENT_EVIDENCE":
-            gaps.append(f"Behavioral assessment score ({c_score}/100) indicates growth areas in communication/adaptability.")
+        if c_score < 70 and behavioral.status == "COMPLETED":
+            gaps.append(f"Behavioral assessment score ({c_score}/100) is below the 70/100 target; see competency evidence.")
 
         # 3. Agent perspective divergence / disagreements
         score_spread = max(r_score, s_score, c_score) - min(r_score, s_score, c_score)
-        if (r_score - s_score) >= 25:
-            disagreements.append(
-                f"High Divergence: Resume score ({r_score}) significantly exceeds demonstrated technical test score ({s_score}). "
-                "Suggests resume keyword inflation without hands-on depth."
-            )
-        elif (s_score - r_score) >= 25:
-            disagreements.append(
-                f"Hidden Gem Indicator: Technical test score ({s_score}) substantially outperforms resume score ({r_score}). "
-                "Candidate has strong hands-on skills despite modest resume pedigree."
-            )
+        if technical.status == "COMPLETED" and screening.status == "COMPLETED":
+            if (r_score - s_score) >= 25:
+                disagreements.append(f"Resume score ({r_score}) exceeds the demonstrated technical score ({s_score}) by "
+                                     f"{r_score - s_score:.0f} points; verify hands-on depth in interview.")
+            elif (s_score - r_score) >= 25:
+                disagreements.append(f"Technical score ({s_score}) exceeds the resume score ({r_score}) by "
+                                     f"{s_score - r_score:.0f} points; the resume may understate the candidate's skills.")
 
         if has_insufficient_evidence:
-            disagreements.append("Incomplete data: One or more stages returned insufficient or failed evaluation status.")
+            incomplete = [name for name, status in (("resume screening", screening.status), ("technical assessment", technical.status),
+                                                    ("behavioral assessment", behavioral.status)) if status != "COMPLETED"]
+            disagreements.append(f"Incomplete evidence: {', '.join(incomplete)} not completed; those stages count as 0 in the merged score.")
+
+        # Candidate memory: compare with the previous assessment round, if any.
+        if history:
+            previous = history[-1]
+            disagreements.append(
+                f"Previous round {previous.get('round_number', len(history))}: merged score {previous.get('merged_score')} "
+                f"({previous.get('recommendation')}); human outcome: {previous.get('human_decision') or 'none recorded'}.")
 
         # 4. Evidence aggregation
         evidence.extend(screening.evidence[:2])
@@ -91,13 +98,14 @@ class PanelCoordinatorAgent:
         evidence.extend(behavioral.evidence[:2])
 
         # 5. Deterministic routing: explanation generation cannot change this result.
-        major_divergence = score_spread >= 30
-        requires_four_eyes = major_divergence or (technical.confidence is not None and technical.confidence < 0.60)
+        # Divergence is only meaningful when every stage produced a real score.
+        major_divergence = score_spread >= 30 and not has_insufficient_evidence
+        low_confidence = technical.status == "COMPLETED" and technical.confidence is not None and technical.confidence < 0.60
+        requires_four_eyes = major_divergence or low_confidence
         if requires_four_eyes:
-            disagreements.append(
-                f"Four-Eyes Governance Escalation: Inter-agent score divergence of {score_spread} points (>=30) detected. "
-                "Dual independent human review sign-offs required prior to final disposition."
-            )
+            cause = (f"agent scores diverge by {score_spread:.0f} points (threshold 30)" if major_divergence
+                     else f"technical evaluation confidence is low ({technical.confidence:.2f})")
+            disagreements.append(f"Two-reviewer sign-off required: {cause}. A final decision needs two different HR reviewers who agree.")
 
         if has_insufficient_evidence:
             recommendation = "ADDITIONAL_INFORMATION_REQUIRED"
@@ -116,7 +124,8 @@ class PanelCoordinatorAgent:
 
         # Optional LLM prose is restricted to the structured facts above; only deterministic code routes.
         strategy_map = {"template": TemplateSynthesisStrategy()}
-        if panel_coordinator_config.use_llm_synthesis:
+        from app.agents.llm_factory import llm_available
+        if panel_coordinator_config.use_llm_synthesis and llm_available():
             strategy_map["llm"] = LLMStrategy()
             order = ("llm", "template")
         else:
@@ -162,5 +171,6 @@ class PanelCoordinatorAgent:
             used_llm_synthesis=synthesis["successful_strategy"] == "llm",
             synthesis_latency_ms=synthesis["total_latency_ms"],
             synthesis_strategy=synthesis["successful_strategy"] or "none",
-            synthesis_error=synthesis_error
+            synthesis_error=synthesis_error,
+            round_number=len(history or []) + 1
         )

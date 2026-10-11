@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from datetime import datetime, timezone
 import re
 from app.database.session import get_db
@@ -130,36 +129,3 @@ def outcome_history(user: dict = Depends(require_hr), db: Session = Depends(get_
                             "recommendation": panel.recommendation} if panel else None)
         })
     return results
-
-
-def historical_context(db: Session, candidate: Candidate, panel: PanelDecision | None):
-    """Return same-role, nearby-score evidence without presenting sparse data as a prediction."""
-    if not panel:
-        return {"similar_hires": 0, "confidence": None, "confidence_label": "UNAVAILABLE", "note": "Panel scores are not available."}
-    # Match same job and each dimension within five points; never use cohort/demographic data.
-    query = db.query(PanelDecision, HiringOutcome).join(
-        HiringOutcome, HiringOutcome.candidate_id == PanelDecision.candidate_id
-    ).join(Candidate, Candidate.candidate_id == PanelDecision.candidate_id).filter(
-        Candidate.target_jd_id == candidate.target_jd_id,
-        PanelDecision.candidate_id != candidate.candidate_id,
-        func.abs(PanelDecision.resume_score - panel.resume_score) <= 5,
-        func.abs(PanelDecision.skill_score - panel.skill_score) <= 5,
-        func.abs(PanelDecision.culture_score - panel.culture_score) <= 5,
-    ).all()
-    latest = {}
-    for prior_panel, outcome in query:
-        prior_candidate = db.query(Candidate).filter_by(candidate_id=prior_panel.candidate_id).first()
-        if not prior_candidate or is_test_candidate(prior_candidate):
-            continue
-        if prior_panel.candidate_id not in latest or prior_panel.created_at > latest[prior_panel.candidate_id][0].created_at:
-            latest[prior_panel.candidate_id] = (prior_panel, outcome)
-    known = [outcome for _, outcome in latest.values() if outcome.still_employed is not None or outcome.performance_rating is not None]
-    successful = [o for o in known if o.still_employed is True and (o.performance_rating is None or o.performance_rating >= 3.5)]
-    return {
-        "similar_hires": len(known),
-        "successful_outcomes": len(successful) if len(known) >= 5 else None,
-        "success_rate": round(len(successful) / len(known), 3) if len(known) >= 5 else None,
-        "confidence": round(len(successful) / len(known), 3) if len(known) >= 5 else None,
-        "confidence_label": "HISTORICAL_SIGNAL" if len(known) >= 5 else "INSUFFICIENT_HISTORY",
-        "note": "Historical context is descriptive and is not an automated hiring recommendation."
-    }

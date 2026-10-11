@@ -16,9 +16,16 @@ class Candidate(Base):
     name = Column(String, nullable=False, index=True)
     email = Column(String, nullable=False, unique=True, index=True)
     phone = Column(String, nullable=True)
-    cohort_tag = Column(String, nullable=True, default="General Cohort")
+    # Self-reported/HR-recorded cohort used only for aggregate bias monitoring; None means not recorded.
+    cohort_tag = Column(String, nullable=True, default=None)
+    password_hash = Column(String, nullable=True)  # Only set for candidates with a portal account
     resume_text = Column(Text, nullable=True)
-    resume_file_path = Column(String, nullable=True)
+    resume_file_path = Column(String, nullable=True)  # Server-side storage key; never exposed to clients
+    resume_original_filename = Column(String, nullable=True)
+    resume_hash = Column(String, nullable=True)  # SHA-256 of resume_text; lets screening reuse cached results
+    resume_profile = Column(JSON, default=dict)  # Structured extraction: skills, education, experience, projects
+    # The question set this applicant was shown; kept even if the rubric (and its questions) change later.
+    assigned_question_set_id = Column(String, nullable=True)
     skills_extracted = Column(JSON, default=list) # List of extracted skills
     experience_years = Column(Float, default=0.0)
     education = Column(String, nullable=True)
@@ -27,7 +34,7 @@ class Candidate(Base):
         String, 
         default="APPLIED", 
         index=True
-    ) # APPLIED, RESUME_SCREENED, TECHNICAL_ASSESSED, BEHAVIORAL_ASSESSED, PANEL_EVALUATED, BIAS_CHECKED, HUMAN_REVIEW_PENDING, DECIDED
+    ) # APPLIED, RESUME_SCREENED, TECHNICAL_ASSESSED, BEHAVIORAL_ASSESSED, PANEL_EVALUATED, HUMAN_REVIEW_PENDING, INFO_REQUESTED, DECIDED
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -59,6 +66,7 @@ class JobDescription(Base):
     # Relationships
     candidates = relationship("Candidate", back_populates="job_description")
     rubrics = relationship("Rubric", back_populates="job_description", cascade="all, delete-orphan")
+    question_sets = relationship("QuestionSet", back_populates="job_description", cascade="all, delete-orphan")
 
 
 class Rubric(Base):
@@ -90,10 +98,33 @@ class ScreeningResult(Base):
     evidence = Column(JSON, default=list) # Observed facts extracted from resume
     rubric_version = Column(String, default="1.0")
     status = Column(String, default="COMPLETED") # COMPLETED, INSUFFICIENT_EVIDENCE
+    strategy_used = Column(String, nullable=True)
+    resume_hash = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     candidate = relationship("Candidate", back_populates="screening_results")
+
+
+class QuestionSet(Base):
+    """Generated assessment for one JD + rubric version, shared by every applicant to that role.
+
+    Persisting the set is both the cache (no repeated LLM calls) and a fairness control: every
+    candidate for the same rubric version answers the same questions.
+    """
+    __tablename__ = "question_sets"
+
+    question_set_id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    jd_id = Column(String, ForeignKey("job_descriptions.jd_id"), nullable=False, index=True)
+    rubric_version = Column(String, nullable=False)
+    content_hash = Column(String, nullable=False, index=True)
+    generator = Column(String, nullable=False, default="template")  # llm | template
+    technical_questions = Column(JSON, default=list)
+    behavioral_questions = Column(JSON, default=list)
+    generation_notes = Column(JSON, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    job_description = relationship("JobDescription", back_populates="question_sets")
 
 
 class Assessment(Base):
@@ -109,7 +140,10 @@ class Assessment(Base):
     skill_breakdown = Column(JSON, default=dict) # e.g. {"Python": 90, "SQL": 80} or {"communication": 8, "teamwork": 9}
     evidence = Column(JSON, default=list) # Specific citations from candidate answers
     confidence = Column(Float, default=1.0)
-    status = Column(String, default="COMPLETED") # COMPLETED, INSUFFICIENT_EVIDENCE, PENDING
+    status = Column(String, default="COMPLETED") # COMPLETED, INSUFFICIENT_EVIDENCE, EXPERT_REVIEW_PENDING
+    question_set_id = Column(String, nullable=True)
+    execution_results = Column(JSON, default=dict)  # Sandboxed test-case results per coding question
+    strategy_used = Column(String, nullable=True)
     completed_date = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -144,6 +178,7 @@ class PanelDecision(Base):
     synthesis_strategy = Column(String, default="template")
     synthesis_error = Column(String, nullable=True)
     rubric_version = Column(String, default="1.0")
+    round_number = Column(Integer, nullable=True)  # Assessment round this panel run belongs to (candidate memory)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -160,8 +195,8 @@ class BiasCheck(Base):
     flag_status = Column(
         String, 
         nullable=False, 
-        default="NO_SIGNIFICANT_DISPARITY_DETECTED"
-    ) # FLAGGED, NO_SIGNIFICANT_DISPARITY_DETECTED
+        default="NO_INDICATOR_DETECTED"
+    ) # STATISTICALLY_SUPPORTED_DISPARITY, POTENTIAL_DISPARITY_INDICATOR, INSUFFICIENT_DATA, NO_INDICATOR_DETECTED
     reason = Column(String, nullable=True)
     cohort_breakdown = Column(JSON, default=dict) # Comparative statistics across cohorts
     requires_human_review = Column(Boolean, default=True) # Always True per governance rule
@@ -187,6 +222,8 @@ class HumanReview(Base):
         nullable=False
     ) # APPROVE, REJECT, REQUEST_MORE_INFORMATION
     notes = Column(Text, nullable=False)
+    # Four-eyes: a final APPROVE/REJECT on an escalated decision needs two distinct reviewers who agree.
+    is_final = Column(Boolean, default=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -260,6 +297,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     log_id = Column(String, primary_key=True, default=generate_uuid, index=True)
+    seq = Column(Integer, nullable=True, index=True)  # Monotonic chain position (timestamps can tie)
+    hash_version = Column(Integer, nullable=True)  # 2 = hash covers the full canonical entry
     candidate_id = Column(String, ForeignKey("candidates.candidate_id"), nullable=True, index=True)
     stage = Column(String, nullable=False)
     event = Column(String, nullable=False)

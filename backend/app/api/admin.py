@@ -8,6 +8,7 @@ from app.config import settings, panel_coordinator_config
 from app.database.models import StrategyMetric, HumanExpertTask, Candidate, HiringOutcome, BiasCheck
 from app.database.session import get_db
 from app.services.bias_service import calculate_cohort_analytics
+from app.services.audit_service import log_event
 
 router = APIRouter(prefix="/admin", tags=["HR Administration & Monitoring"])
 
@@ -74,6 +75,8 @@ def update_expert_task(task_id: str, payload: ExpertTaskUpdate, user: dict = Dep
     if payload.assigned_to:
         task.assigned_to = payload.assigned_to
     db.commit()
+    log_event(db, stage="EXPERT_TASK", event=f"Expert review task marked {task.status}", agent=f"HR ({user.get('name') or user['email']})",
+              candidate_id=task.candidate_id, input_reference={"task_id": task.task_id, "assigned_to": task.assigned_to})
     return {"task_id": task.task_id, "status": task.status, "assigned_to": task.assigned_to}
 
 
@@ -83,9 +86,12 @@ def get_panel_coordinator_config(user: dict = Depends(require_hr)):
 
 
 @router.patch("/panel-coordinator-config")
-def patch_panel_coordinator_config(payload: PanelCoordinatorConfigPatch, user: dict = Depends(require_hr)):
-    for key, value in payload.model_dump(exclude_unset=True).items():
+def patch_panel_coordinator_config(payload: PanelCoordinatorConfigPatch, user: dict = Depends(require_hr), db: Session = Depends(get_db)):
+    changes = payload.model_dump(exclude_unset=True)
+    for key, value in changes.items():
         setattr(panel_coordinator_config, key, value)
+    log_event(db, stage="CONFIGURATION", event="Panel synthesis settings changed", agent=f"HR ({user.get('name') or user['email']})",
+              input_reference=changes, output=panel_coordinator_config.model_dump())
     return panel_coordinator_config.model_dump()
 
 
@@ -113,24 +119,16 @@ def panel_synthesis_metrics(user: dict = Depends(require_hr), db: Session = Depe
 @router.get("/bias-checks/summary")
 def bias_check_summary(user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     checks = db.query(BiasCheck).all()
-    flagged = sum(check.flag_status == "FLAGGED" for check in checks)
-    return {"checks_recorded": len(checks), "flagged_checks": flagged,
-            "flag_rate_percent": round(flagged / len(checks) * 100, 1) if checks else None,
-            "insufficient_data_checks": sum(any(item.get("flag_status") == "INSUFFICIENT_DATA"
-                for item in (check.cohort_breakdown or {}).get("checks", [])) for check in checks),
-            "notice": "Aggregate screening signals require HR review and are not findings about individual merit."}
+    by_status = {}
+    for check in checks:
+        by_status[check.flag_status] = by_status.get(check.flag_status, 0) + 1
+    return {"checks_recorded": len(checks), "by_status": by_status,
+            "notice": "Indicators are screening signals for HR review, not findings about individual merit."}
 
 
 @router.get("/bias-checks/by-cohort")
 def bias_checks_by_cohort(user: dict = Depends(require_hr), db: Session = Depends(get_db)):
-    analytics = calculate_cohort_analytics(db)
-    return {"total_evaluated": analytics["total_evaluated"],
-            "cohorts": [{"cohort_name": row["cohort_name"], "sample_size": row["total_candidates"],
-                         "proceed_rate": row["proceed_rate"] if row["total_candidates"] >= 10 else None,
-                         "flagged_disparity": row["flagged_disparity"] if row["total_candidates"] >= 10 else None,
-                         "confidence_level": "low" if row["total_candidates"] < 10 else "medium" if row["total_candidates"] < 30 else "high"}
-                        for row in analytics["cohorts"]],
-            "notice": "Rates and flags are suppressed below n=10; aggregate results are descriptive and may be confounded by role or process differences."}
+    return calculate_cohort_analytics(db)
 
 
 @router.get("/outcomes")

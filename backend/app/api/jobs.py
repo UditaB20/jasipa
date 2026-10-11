@@ -5,9 +5,9 @@ from app.database.session import get_db
 from app.database.models import JobDescription, Rubric
 from app.schemas.job import JobDescriptionCreate, JobDescriptionResponse, JobDescriptionUpdate
 from app.schemas.rubric import RubricResponse, RubricUpdate
-from app.services.rubric_service import get_or_create_rubric, generate_rubric_for_jd
+from app.services.rubric_service import get_or_create_rubric, next_version
 from app.services.audit_service import log_event
-from app.auth.security import require_hr, get_current_user
+from app.auth.security import require_hr
 
 router = APIRouter(prefix="/jobs", tags=["Job Descriptions"])
 
@@ -22,7 +22,7 @@ def create_job_description(
         department=payload.department,
         description=payload.description,
         required_skills=payload.required_skills,
-        preferred_skills=payload.preferred_skills,
+        preferred_skills=payload.preferred_skills or [],
         min_experience=payload.min_experience,
         education_requirement=payload.education_requirement,
         rubric_version="1.0"
@@ -37,8 +37,8 @@ def create_job_description(
     log_event(
         db,
         stage="JD_CREATED",
-        event=f"Job Description Created: {jd.title}",
-        agent="HR_ADMIN",
+        event=f"Job created: {jd.title}",
+        agent=f"HR ({current_user.get('name') or current_user['email']})",
         input_reference={"jd_id": jd.jd_id, "title": jd.title},
         output={"rubric_version": rubric.version, "criteria": rubric.criteria},
         rubric_version=rubric.version
@@ -47,18 +47,18 @@ def create_job_description(
     return jd
 
 @router.get("/", response_model=List[JobDescriptionResponse])
-def list_job_descriptions(db: Session = Depends(get_db)):
+def list_job_descriptions(current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     return db.query(JobDescription).order_by(JobDescription.created_at.desc()).all()
 
 @router.get("/{jd_id}", response_model=JobDescriptionResponse)
-def get_job_description(jd_id: str, db: Session = Depends(get_db)):
+def get_job_description(jd_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
     if not jd:
         raise HTTPException(status_code=404, detail="Job description not found")
     return jd
 
 @router.get("/{jd_id}/rubric", response_model=RubricResponse)
-def get_job_rubric(jd_id: str, db: Session = Depends(get_db)):
+def get_job_rubric(jd_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
     jd = db.query(JobDescription).filter(JobDescription.jd_id == jd_id).first()
     if not jd:
         raise HTTPException(status_code=404, detail="Job description not found")
@@ -80,13 +80,19 @@ def update_job_rubric(
     if not jd:
         raise HTTPException(status_code=404, detail="Job description not found")
 
-    rubric = get_or_create_rubric(db, jd)
+    current = get_or_create_rubric(db, jd)
+    # Edits create a new rubric version; earlier versions stay intact because past decisions reference them.
+    rubric = Rubric(jd_id=jd.jd_id, version=current.version, resume_weight=current.resume_weight,
+                    skill_weight=current.skill_weight, culture_weight=current.culture_weight,
+                    criteria=dict(current.criteria or {}))
 
     # Validate weights if provided
     r_w = payload.resume_weight if payload.resume_weight is not None else rubric.resume_weight
     s_w = payload.skill_weight if payload.skill_weight is not None else rubric.skill_weight
     c_w = payload.culture_weight if payload.culture_weight is not None else rubric.culture_weight
 
+    if any(w is None or w < 0 or w > 1 for w in (r_w, s_w, c_w)):
+        raise HTTPException(status_code=400, detail="Each weight must be between 0 and 1.")
     total_weight = round(r_w + s_w + c_w, 2)
     if not (0.98 <= total_weight <= 1.02):
         raise HTTPException(
@@ -160,28 +166,19 @@ def update_job_rubric(
         }
         rubric.criteria = current_crit
 
-    # Increment or set version
-    if payload.version:
-        rubric.version = payload.version
-    else:
-        try:
-            cur_v = float(rubric.version)
-            rubric.version = f"{cur_v + 0.1:.1f}"
-        except Exception:
-            rubric.version = f"{rubric.version}.1"
-
+    rubric.version = next_version(db, jd.jd_id, current.version)
     jd.rubric_version = rubric.version
-
+    db.add(rubric)
     db.commit()
     db.refresh(rubric)
 
     log_event(
         db,
         stage="JD_RUBRIC_UPDATED",
-        event=f"Job Rubric Customized by HR: {jd.title} (v{rubric.version})",
-        agent=f"HR_ADMIN ({current_user.get('name', 'Talent Team')})",
+        event=f"Rubric updated for {jd.title}: v{current.version} -> v{rubric.version}",
+        agent=f"HR ({current_user.get('name') or current_user['email']})",
         candidate_id=None,
-        input_reference={"jd_id": jd.jd_id, "version": rubric.version},
+        input_reference={"jd_id": jd.jd_id, "version": rubric.version, "previous_version": current.version},
         output={
             "resume_weight": rubric.resume_weight,
             "skill_weight": rubric.skill_weight,
@@ -193,3 +190,9 @@ def update_job_rubric(
 
     return rubric
 
+
+
+@router.get("/{jd_id}/rubrics", response_model=List[RubricResponse])
+def list_rubric_versions(jd_id: str, current_user: dict = Depends(require_hr), db: Session = Depends(get_db)):
+    """Full rubric history for a job, oldest first."""
+    return db.query(Rubric).filter(Rubric.jd_id == jd_id).order_by(Rubric.created_at.asc()).all()

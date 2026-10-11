@@ -4,9 +4,10 @@ import csv
 import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.database.session import SessionLocal
+from app.database.session import SessionLocal, engine
+from app.database.migrations import run_additive_migrations
 from app.database.models import Candidate, JobDescription
-from app.services.resume_parser import extract_preliminary_metadata
+from app.services.resume_parser import extract_preliminary_metadata, text_hash
 
 # Category to Job Description mapping with specific domain skills
 KAGGLE_CATEGORY_JD_TEMPLATES = {
@@ -129,6 +130,7 @@ def import_kaggle_resumes(
         print(f"Error: File not found at '{csv_path}'")
         return 0
 
+    run_additive_migrations(engine)
     db = SessionLocal()
     imported_count = 0
     category_counts = {}
@@ -183,6 +185,8 @@ def import_kaggle_resumes(
                     email=email,
                     cohort_tag=cohort_tag,
                     resume_text=resume_text,
+                    resume_hash=text_hash(resume_text),
+                    resume_profile=meta["profile"],
                     skills_extracted=meta["skills"],
                     experience_years=meta["experience_years"],
                     education=meta["education"],

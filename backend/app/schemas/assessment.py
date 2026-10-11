@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -11,18 +11,8 @@ class QuestionItem(BaseModel):
     rubric_guideline: Optional[str] = None # what constitutes a strong answer
 
 class AnswerItem(BaseModel):
-    question_id: str
-    answer_text: str
-
-class TechnicalAssessmentSubmit(BaseModel):
-    candidate_id: str
-    jd_id: str
-    answers: List[AnswerItem]
-
-class BehavioralAssessmentSubmit(BaseModel):
-    candidate_id: str
-    jd_id: str
-    answers: List[AnswerItem]
+    question_id: str = Field(min_length=1, max_length=40)
+    answer_text: str = Field(default="", max_length=20000)
 
 class SkillAssessorOutput(BaseModel):
     candidate_id: str
@@ -32,11 +22,13 @@ class SkillAssessorOutput(BaseModel):
     skill_breakdown: Dict[str, float]
     evidence: List[str]
     confidence: float = 1.0
-    status: str = "COMPLETED" # COMPLETED or INSUFFICIENT_EVIDENCE
+    status: str = "COMPLETED" # COMPLETED, INSUFFICIENT_EVIDENCE, EXPERT_REVIEW_PENDING, EVALUATION_FAILED
     strategy_used: str = "none"
     fallback_chain_depth: int = 0
     fallback_latency_ms: int = 0
     attempts_before_success: int = 0
+    question_scores: Dict[str, float] = Field(default_factory=dict)
+    execution_results: Dict[str, Any] = Field(default_factory=dict)
 
 class CultureFitOutput(BaseModel):
     candidate_id: str
@@ -64,6 +56,9 @@ class AssessmentResponse(BaseModel):
     evidence: List[str]
     confidence: float
     status: str
+    question_set_id: Optional[str] = None
+    execution_results: Optional[Dict[str, Any]] = None
+    strategy_used: Optional[str] = None
     completed_date: datetime
 
     class Config:

@@ -80,9 +80,7 @@ def generate_rubric_for_jd(jd: JobDescription, version: str = "1.0") -> Dict[str
     return rubric_criteria
 
 def get_or_create_rubric(db: Session, jd: JobDescription) -> Rubric:
-    """
-    Fetches the existing active rubric for a JD or generates a new one.
-    """
+    """Returns the rubric for the JD's active version, generating version 1.0 on first use."""
     existing_rubric = db.query(Rubric).filter(Rubric.jd_id == jd.jd_id, Rubric.version == jd.rubric_version).first()
     if existing_rubric:
         return existing_rubric
@@ -100,3 +98,32 @@ def get_or_create_rubric(db: Session, jd: JobDescription) -> Rubric:
     db.commit()
     db.refresh(rubric)
     return rubric
+
+
+def next_version(db: Session, jd_id: str, current: str) -> str:
+    """Next free minor version (1.0 -> 1.1 -> ... -> 1.10), never reusing an existing version label."""
+    used = {row.version for row in db.query(Rubric.version).filter(Rubric.jd_id == jd_id).all()}
+    try:
+        major, minor = (current or "1.0").split(".", 1)
+        major, minor = int(major), int(minor)
+    except ValueError:
+        major, minor = 1, 0
+    candidate = f"{major}.{minor + 1}"
+    while candidate in used:
+        minor += 1
+        candidate = f"{major}.{minor + 1}"
+    return candidate
+
+
+def rubric_to_dict(rubric: Rubric) -> Dict[str, Any]:
+    """Uniform rubric payload for agents: weights, version and criteria together."""
+    return {"rubric_id": rubric.rubric_id, "jd_id": rubric.jd_id, "version": rubric.version,
+            "resume_weight": rubric.resume_weight, "skill_weight": rubric.skill_weight,
+            "culture_weight": rubric.culture_weight, "criteria": rubric.criteria or {}}
+
+
+def jd_to_dict(jd: JobDescription) -> Dict[str, Any]:
+    return {"jd_id": jd.jd_id, "title": jd.title, "department": jd.department, "description": jd.description,
+            "required_skills": jd.required_skills or [], "preferred_skills": jd.preferred_skills or [],
+            "min_experience": jd.min_experience, "education_requirement": jd.education_requirement,
+            "rubric_version": jd.rubric_version}
