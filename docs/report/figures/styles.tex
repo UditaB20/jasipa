@@ -1,0 +1,15 @@
+\usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric,shapes.multipart,calc,backgrounds}
+\definecolor{ink}{HTML}{16171B}\definecolor{muted}{HTML}{565B66}\definecolor{line}{HTML}{C9CBD3}
+\definecolor{accent}{HTML}{3E63DD}\definecolor{accentsoft}{HTML}{EEF2FD}\definecolor{green}{HTML}{1F8F5F}
+\definecolor{greensoft}{HTML}{E9F6EF}\definecolor{amber}{HTML}{B7791F}\definecolor{ambersoft}{HTML}{FDF4E3}
+\definecolor{panel}{HTML}{F7F7F8}
+\tikzset{
+  box/.style={draw=line, fill=white, rounded corners=3pt, align=center, font=\sffamily\small, inner sep=5pt, text=ink, minimum height=9mm},
+  agent/.style={box, draw=accent, fill=accentsoft},
+  human/.style={box, draw=green, fill=greensoft},
+  store/.style={box, draw=amber, fill=ambersoft},
+  group/.style={draw=line, dashed, rounded corners=5pt, inner sep=7pt},
+  lbl/.style={font=\sffamily\scriptsize, text=muted},
+  arr/.style={-{Stealth[length=2.2mm]}, draw=muted, line width=0.6pt},
+  title/.style={font=\sffamily\bfseries\small, text=ink},
+}

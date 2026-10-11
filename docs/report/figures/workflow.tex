@@ -1,0 +1,20 @@
+\begin{tikzpicture}[node distance=6mm and 9mm]
+\node[box, text width=34mm] (in) {Stored evidence\\\scriptsize resume, submitted\\ assessments, prior rounds};
+\node[agent, right=of in, text width=22mm] (d) {swarm\_dispatch};
+\node[agent, above right=4mm and 10mm of d, text width=28mm] (s) {Resume-Screener\\\scriptsize rubric-weighted};
+\node[agent, right=10mm of d, text width=28mm] (k) {Skill-Assessor\\\scriptsize key + sandbox + LLM};
+\node[agent, below right=4mm and 10mm of d, text width=28mm] (c) {Culture-Fit\\\scriptsize STAR evidence};
+\node[agent, right=12mm of k, text width=26mm] (p) {Panel Coordinator\\\scriptsize weighted merge,\\ routing, memory};
+\node[agent, below=9mm of p, text width=26mm] (b) {Bias check\\\scriptsize bound to decision};
+\node[store, below=12mm of b, text width=26mm] (a) {Audit ledger\\\scriptsize SHA-256 chain};
+\node[human, left=34mm of a, text width=34mm] (h) {Human reviewer(s)\\\scriptsize APPROVE / REJECT / REQUEST INFO};
+\draw[arr] (in) -- (d);
+\draw[arr] (d) -- (s); \draw[arr] (d) -- (k); \draw[arr] (d) -- (c);
+\draw[arr] (s) -- (p); \draw[arr] (k) -- (p); \draw[arr] (c) -- (p);
+\draw[arr] (p) -- node[lbl, right] {decision\_id} (b);
+\draw[arr] (b.west) -| node[lbl, below, pos=0.25] {awaiting human decision} (h.north);
+\draw[arr] (b) -- (a);
+\draw[arr] (h) -- node[lbl, above] {decision + notes} (a);
+\node[lbl, above=1mm of s] {parallel LangGraph branches (pure nodes)};
+\node[lbl, below=1mm of h] {two agreeing reviewers when the panel escalates};
+\end{tikzpicture}

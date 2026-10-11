@@ -1,0 +1,16 @@
+\chapter*{ABSTRACT}%
+\begin{justify}
+
+\addcontentsline{toc}{chapter}{ABSTRACT}
+Screening job applicants is repetitive, inconsistent between reviewers and exposed to bias, and fully automated screening tools create legal and ethical risk when they reject people without human oversight. This project builds JASIPA (Job Applicant Screening and Interview Panel Agent), an agentic system that takes a candidate from resume screening through skill assessment to an interview-panel recommendation, checks every merged recommendation for cohort disparity, and leaves every final decision to an authenticated human reviewer.
+
+JASIPA runs three evaluator agents (Resume-Screener, Skill-Assessor and Culture-Fit) as parallel LangGraph branches whose outputs are merged by a Panel Coordinator using a versioned, job-description-anchored rubric. A QuestionGenerationAgent produces role-specific multiple-choice, coding, scenario and STAR behavioural questions; coding answers are executed against visible and hidden tests in an isolated sandbox. A bias checker reports selection-rate disparities with four-fifths impact ratios, Fisher's exact tests and Wilson intervals, distinguishing \emph{disparity detected}, \emph{no indicator detected} and \emph{insufficient data}. Recommendations can only route candidates to a human; escalated cases need two agreeing reviewers, and all agent outputs and decisions are written to a hash-chained audit ledger exposed to tools through a Model Context Protocol connector. Candidates come from the Kaggle Resume Dataset and from a candidate portal that accepts PDF and DOCX resumes.
+
+The system is implemented with FastAPI, SQLAlchemy, LangGraph and React. 149 automated tests were executed: 110 backend tests, 30 frontend component tests and 9 browser end-to-end tests against the running system, and all 149 passed. The agents do not learn from feedback: scoring is rubric-based and deterministic, with an optional large language model used for open-ended judgements and drafting.
+\end{justify}
+\pagenumbering{roman}
+
+\begin{flushleft}
+\vspace{1cm}
+\textsl {\textbf {Keywords :} agentic AI, LangGraph, multi-agent orchestration, candidate screening, algorithmic fairness, four-fifths rule, Fisher's exact test, human-in-the-loop, code sandbox, Model Context Protocol.}
+\end{flushleft}

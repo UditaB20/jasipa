@@ -1,0 +1,25 @@
+\chapter{CONCLUSIONS AND FUTURE SCOPE}
+
+\section{Conclusion}
+\paragraph\
+JASIPA implements an HR screening agent in which three independent evaluator agents, coordinated through a LangGraph swarm and anchored to a versioned rubric, produce a recommendation that always goes to a human. Every panel decision carries a bias check that reports the cohort definition, sample sizes, impact ratios and Fisher's exact $p$-values, and that states clearly whether the evidence shows a disparity, shows no indicator, or is insufficient. Resumes in PDF and DOCX are parsed into structured sections. Assessments are generated per role, code is executed in a sandbox, and all actions are recorded in a verifiable hash-chained audit log. The system uses the Kaggle Resume Dataset as candidate data instead of synthetic records, and all 149 automated test cases pass.
+
+\section{Limitations}\label{sec:limits}
+\begin{itemize}
+\item \textbf{No learning loop.} Agents do not adapt from reviewer decisions or hiring outcomes (Section \ref{sec:learning}).
+\item \textbf{No real cohort data.} The bias statistics are validated on controlled test cases only; in the shipped data every analysis reports insufficient data.
+\item \textbf{Dataset scope.} Only six of the 24 Kaggle categories have authored job descriptions, none of them programming roles, and the dataset has no assessments or outcomes. Agent accuracy against real hiring decisions is therefore not measured.
+\item \textbf{LLM paths.} Tests run without an LLM key; the LLM strategies are tested with mocked responses, and their output quality has not been evaluated.
+\item \textbf{Sandbox.} The default subprocess sandbox is defence in depth rather than a hardened isolation boundary; the Docker backend is recommended for deployment.
+\item \textbf{Small samples.} With fewer than 30 candidates per cohort, the significance test has low power.
+\end{itemize}
+
+\section{Future Scope}
+\begin{itemize}
+\item A supervised, audited feedback process that proposes rubric changes from hiring outcomes, with human approval and before/after bias analysis.
+\item Retrieval over past evaluations of the same role, to support consistency between reviewers.
+\item Validation of agent scores against expert ratings on a labelled sample, reporting agreement metrics.
+\item Job descriptions for more dataset categories, and support for more programming languages in the sandbox.
+\item Container- or VM-based sandboxing by default, and integration with production ATS systems over MCP.
+\item Intersectional cohort analysis and power analysis to estimate the sample size needed for each check.
+\end{itemize}

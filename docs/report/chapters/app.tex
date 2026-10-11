@@ -1,0 +1,59 @@
+\chapter{}
+
+\section{Screen Shot}
+
+\begin{figure}[H]\centering\includegraphics[width=0.85\textwidth]{../screenshots/01-login.png}
+\caption{Sign-in page}\label{fig:ss-login}\end{figure}
+
+\begin{figure}[H]\centering\includegraphics[width=0.85\textwidth]{../screenshots/09-dataset-resume.png}
+\caption{Kaggle dataset record displayed in its original sections}\label{fig:ss-dataset}\end{figure}
+
+\begin{figure}[H]\centering\includegraphics[width=0.85\textwidth]{../screenshots/10-bias-monitor.png}
+\caption{Bias monitor showing the cohort definition, method and missing-cohort count}\label{fig:ss-monitor}\end{figure}
+
+\begin{figure}[H]\centering\includegraphics[height=0.45\textheight]{../screenshots/11-mobile.png}
+\caption{Responsive layout at 375$\times$812}\label{fig:ss-mobile}\end{figure}
+
+\section {Gantt Chart}
+\begin{figure}[H]\centering\resizebox{\textwidth}{!}{\input{figures/gantt.tex}}
+\caption{Project schedule}\label{fig:gantt}\end{figure}
+
+\section {Glossary}
+\begin{description}
+\item[ATS] Applicant tracking system: the database of jobs, candidates and applications.
+\item[Cohort] An HR-recorded monitoring label used only for fairness statistics.
+\item[Four-fifths rule] Adverse-impact screen: a cohort's selection rate below 80\% of the highest cohort's rate.
+\item[Impact ratio] A cohort's selection rate divided by the reference cohort's rate.
+\item[Fisher's exact test] Exact significance test for a 2$\times$2 table of selected/not selected by cohort.
+\item[Wilson interval] Confidence interval for a proportion, reliable for small $n$.
+\item[MCP] Model Context Protocol: a JSON-RPC protocol through which agents call external tools.
+\item[STAR] Situation, Task, Action, Result: a structure for behavioural answers.
+\item[Rubric] Versioned scoring criteria and weights derived from a job description.
+\item[Swarm] Several agents working in parallel on separate evidence, merged by a coordinator.
+\item[JWT] JSON Web Token used for authenticated API sessions.
+\end{description}
+
+\section {Description of Tools and  Technology used}
+\begin{table}[H]\centering\small\caption{Tools and technologies}
+\begin{tabular}{|p{3.6cm}|p{10.4cm}|}\hline
+\textbf{Tool} & \textbf{Use}\\ \hline
+Python 3.12, FastAPI & REST API, dependency-injected authentication and RBAC\\ \hline
+SQLAlchemy 2, SQLite/PostgreSQL & ORM and storage with additive migrations\\ \hline
+LangGraph & Agent state graph with parallel evaluator branches\\ \hline
+Google Gemini (optional) & LLM strategies for scoring, question drafting and summaries\\ \hline
+PyMuPDF, python-docx & Resume text extraction\\ \hline
+bcrypt, python-jose & Password hashing and JWT\\ \hline
+React 19, Vite 8 & Single-page frontend\\ \hline
+pytest, Vitest, Testing Library, Playwright & Automated tests\\ \hline
+Docker (optional) & Hardened code-execution backend\\ \hline
+\LaTeX\ (Tectonic), TikZ & Report and diagrams\\ \hline
+Git, GitHub & Version control\\ \hline
+\end{tabular}\end{table}
+
+\section{Blue Print}
+
+Attach your Blue Print file at the end
+
+\section{Plagiarism Report}
+
+Attach your Plagiarism Report file at the end

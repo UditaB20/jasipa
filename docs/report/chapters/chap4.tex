@@ -1,0 +1,77 @@
+\chapter{SYSTEM DESIGN}
+
+\paragraph\
+This chapter describes the design of the system's components, their interactions and its data, with the core algorithms in pseudocode.
+
+\section{Architecture of the system}
+\paragraph\
+The architecture (Figure \ref{Fwk1}) has three tiers. The frontend is a single-page React application with hash-based routing that restores sessions and signs users out when tokens expire. The backend exposes REST endpoints grouped by resource (auth, candidates, jobs, assessments, pipeline, reviews, bias, audit, dashboard, MCP, administration). Services encapsulate resume ingestion, assessment submission, the pipeline, bias statistics and the audit ledger; agents encapsulate evaluation logic. Figure \ref{fig:workflow} shows the agent workflow: a dispatch node fans out to three evaluator nodes that run in parallel and read only the graph state, so they never share a database session across threads; the Panel Coordinator persists results sequentially; the bias node records statistics against the new panel decision; and the candidate waits for a human decision.
+
+\begin{figure}[H]\centering
+\resizebox{\textwidth}{!}{\input{figures/workflow.tex}}
+\caption{Agentic workflow (LangGraph swarm, panel, bias check, human decision)}\label{fig:workflow}
+\end{figure}
+
+Algorithm \ref{alg:pipeline} summarises one pipeline run.
+
+\begin{algorithm}[H]
+\caption{Evaluation pipeline run} \label{alg:pipeline}
+\begin{algorithmic}[1]
+\Require candidate $c$ with target job $j$; no final decision recorded
+\Ensure panel decision $p$ and bias check $b$ bound to $p$; $c$ awaiting a human decision
+\State $R \gets$ latest rubric of $j$; $H \gets$ previous panel rounds of $c$ for $j$
+\State $s \gets$ cached screening if resume hash and rubric version unchanged, else \Call{ResumeScreener}{$c$, $j$, $R$}
+\State $t \gets$ stored technical assessment (re-scored only if its evaluation failed)
+\State $u \gets$ stored behavioural assessment (re-scored only if its evaluation failed)
+\State $m \gets w_{resume} s + w_{skill} t + w_{behavioural} u$ \Comment{weights from $R$}
+\If{any stage incomplete} \State $label \gets$ ADDITIONAL\_INFORMATION\_REQUIRED
+\ElsIf{$m \geq 75$ and no stage spread $\geq 30$} \State $label \gets$ PROCEED\_TO\_HUMAN\_REVIEW
+\Else \State $label \gets$ HUMAN\_REVIEW\_REQUIRED \EndIf
+\State two\_reviewers $\gets$ (spread $\geq 30$) or (technical confidence $< 0.6$)
+\State $p \gets$ save panel decision($m$, $label$, evidence, round $= |H|+1$)
+\State $b \gets$ \Call{BiasCheck}{$c$, $p$}; append audit entries; $c.stage \gets$ HUMAN\_REVIEW\_PENDING
+\State \Return $(p, b)$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Class Diagram}
+\paragraph\
+Figure \ref{fig:classes} shows the main classes. Every agent delegates to a \texttt{StrategyChain}, which tries evaluation strategies in order (for example LLM, then rule-based) and records each attempt with its latency and error code. Strategies share the \texttt{EvaluationStrategy} interface, so a new strategy can be added without changing the agents.
+
+\begin{figure}[H]\centering
+\resizebox{\textwidth}{!}{\input{figures/classes.tex}}
+\caption{Class diagram of agents and evaluation strategies}\label{fig:classes}
+\end{figure}
+
+\section{Sequence diagram}
+\paragraph\
+Figure \ref{fig:sequence} follows one application from resume upload to decision. Note that the expected outputs of coding tests never leave the API process: the sandbox only reports what the candidate's code returned.
+
+\begin{figure}[H]\centering
+\resizebox{\textwidth}{!}{\input{figures/sequence.tex}}
+\caption{Sequence diagram: application to decision}\label{fig:sequence}
+\end{figure}
+
+\section{ER diagram and schema}
+\paragraph\
+Figure \ref{fig:er} shows the principal tables. A candidate belongs to one target job and accumulates screening results, assessments and panel decisions. Each panel decision has bias checks, and each human review references both the panel decision and the bias check it was based on. Audit entries carry a sequence number and a hash of the previous entry together with their own full content.
+
+\begin{figure}[H]\centering
+\resizebox{0.95\textwidth}{!}{\input{figures/er.tex}}
+\caption{Entity-relationship diagram (principal tables)}\label{fig:er}
+\end{figure}
+
+\section{State transition diagram}
+\paragraph\
+Candidates move through the states in Figure \ref{fig:states}. Stages only advance; a final decision is terminal, and requesting more information sends the application back for another pipeline round.
+
+\begin{figure}[H]\centering
+\resizebox{0.95\textwidth}{!}{\input{figures/states.tex}}
+\caption{Candidate state transitions}\label{fig:states}
+\end{figure}
+
+\section{Data Set Description}
+\paragraph\
+The Kaggle Resume Dataset \cite{kaggleresume} (\texttt{Resume.csv}) has 2,484 resumes in 24 job categories with four columns: \texttt{ID}, \texttt{Resume\_str} (plain text), \texttt{Resume\_html} (formatted resume with section titles) and \texttt{Category}. The largest categories have about 120 resumes (Information Technology, Business Development); the smallest has 22 (BPO). The dataset contains no names, contact details, demographic attributes or assessment answers; resumes are anonymised (for example ``Company Name City, State'').
+
+JASIPA imports six categories for which job descriptions were authored: Information Technology, Engineering, HR, Finance, Accountant and Business Development. The default seed imports the first 8 resumes of each in file order, giving 48 records. Resume text is rebuilt from \texttt{Resume\_html} so that section boundaries survive. Records are marked \texttt{source = dataset\_import} with the dataset ID and category, have no cohort label, and use a non-deliverable placeholder address (\texttt{kaggle-<ID>@dataset.invalid}) only because the schema requires a unique e-mail. They are screened against their category's job. Because the dataset has no assessment answers, running the full pipeline on a dataset record correctly yields \emph{additional information required}.

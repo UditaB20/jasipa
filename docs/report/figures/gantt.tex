@@ -1,0 +1,15 @@
+% Built from the repository commit history (git log); dates are commit dates.
+\begin{tikzpicture}[x=5mm, y=-7mm]
+\foreach \d/\l in {0/18 Sep, 5/23 Sep, 10/28 Sep, 15/3 Oct, 20/8 Oct, 23/11 Oct} {\node[lbl] at (\d+0.5,-0.2) {\l}; \draw[draw=line] (\d,0.2) -- (\d,8.6);}
+\newcommand{\gbar}[4]{\fill[#4, rounded corners=1pt] (#1,#3-0.32) rectangle (#2,#3+0.32);}
+\node[lbl, anchor=east] at (-0.3,1) {Initial system build};
+\node[lbl, anchor=east] at (-0.3,2) {Candidate portal, auth, UI clean-up};
+\node[lbl, anchor=east] at (-0.3,3) {Secrets hygiene};
+\node[lbl, anchor=east] at (-0.3,4) {Fallback strategies, fairness checks};
+\node[lbl, anchor=east] at (-0.3,5) {Rubric balancing, audit ledger, governance};
+\node[lbl, anchor=east] at (-0.3,6) {Backend rework: agents, sandbox, bias, upload};
+\node[lbl, anchor=east] at (-0.3,7) {Frontend redesign and removals};
+\node[lbl, anchor=east] at (-0.3,8) {Kaggle data, regeneration fix, tests, docs};
+\gbar{0}{11}{1}{accent!55} \gbar{11}{12}{2}{accent!55} \gbar{12}{13}{3}{accent!55} \gbar{13}{17}{4}{accent!55}
+\gbar{17}{21}{5}{accent!55} \gbar{23}{24}{6}{green!70} \gbar{23}{24}{7}{green!70} \gbar{23}{24}{8}{green!70}
+\end{tikzpicture}

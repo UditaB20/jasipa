@@ -1,0 +1,101 @@
+\chapter{SOFTWARE REQUIREMENT SPECIFICATION}
+
+\paragraph\
+This chapter specifies what JASIPA must do and the constraints it operates under. It is derived from the project problem statement and the governance rules in Section 1.4.
+
+\section{Overview of SRS}
+\paragraph\
+There are two user classes, HR reviewers and candidates, plus the agents that act on their behalf. HR reviewers manage jobs and rubrics, inspect evidence and record decisions. Candidates register, upload a resume, apply and take assessments. Agents screen, assess, merge and check bias, but cannot record decisions. The system is a web application (React frontend, FastAPI backend, relational database) with an optional external LLM.
+
+\section{Requirement Specifications}
+\paragraph\
+Functional requirements describe behaviour the system must provide; non-functional requirements constrain how it is provided.
+
+\subsection{Functional Requirements}
+\begin{itemize}
+\item \textbf{FR1} Authenticate HR and candidate users with role-based access; candidates see only their own records.
+\item \textbf{FR2} Create jobs with required/preferred skills and generate a versioned, JD-anchored rubric; rubric edits create a new version.
+\item \textbf{FR3} Accept PDF and DOCX resumes (5 MB limit) from HR and candidates, reject invalid files with clear messages, store originals privately and allow the original to be downloaded.
+\item \textbf{FR4} Extract skills, education, experience, projects and section structure from resumes.
+\item \textbf{FR5} Import records from the Kaggle Resume Dataset, keeping them distinguishable from real applicants.
+\item \textbf{FR6} Generate a role-specific assessment per job and rubric version; allow HR to regenerate it, and report failure instead of silently keeping the old set.
+\item \textbf{FR7} Execute candidate code against visible and hidden tests in an isolated sandbox and score by tests passed.
+\item \textbf{FR8} Run Resume-Screener, Skill-Assessor and Culture-Fit agents in parallel and merge them with a Panel Coordinator into one of three routing labels, none of which is a rejection.
+\item \textbf{FR9} Run a bias check bound to every panel decision and store it with the decision.
+\item \textbf{FR10} Record human decisions (approve, reject, request more information) only for the latest panel decision with a bias check; require two agreeing reviewers when the panel escalates.
+\item \textbf{FR11} Keep a tamper-evident audit log and the candidate's stage history across assessment rounds.
+\item \textbf{FR12} Expose ATS read and write tools through an MCP connector, excluding human decisions.
+\end{itemize}
+
+\subsection{Use case diagrams}
+\begin{figure}[H]\centering
+\resizebox{\textwidth}{!}{\input{figures/usecase.tex}}
+\caption{Use case diagram}\label{fig:usecase}
+\end{figure}
+
+\subsection{Use Case descriptions using scenarios (Pressman template)}
+\begin{table}[H]\centering\small\caption{Use case UC-1: Apply and take assessments}
+\begin{tabular}{|p{3.2cm}|p{11cm}|}\hline
+Use case & Apply to a role and complete the assessment\\ \hline
+Primary actor & Candidate\\ \hline
+Goal in context & Submit a resume and assessment answers so the hiring team can evaluate the application\\ \hline
+Preconditions & Candidate has a portal account; at least one job exists\\ \hline
+Trigger & Candidate chooses \emph{Apply} on an open role\\ \hline
+Scenario & 1. Candidate uploads a PDF/DOCX resume. 2. System validates, stores and parses it and shows the sections read. 3. Candidate applies; the Resume-Screener scores the resume. 4. System pins the role's current question set to the candidate. 5. Candidate answers MCQs, writes code and runs the visible examples, and writes STAR answers. 6. Candidate submits each part once; code is executed against hidden tests.\\ \hline
+Exceptions & Invalid or oversized file: upload rejected with a message. No resume: apply refused. Blank submission: refused. Second submission: refused. Practice-run limit reached: refused.\\ \hline
+Priority & Essential\\ \hline
+\end{tabular}\end{table}
+
+\begin{table}[H]\centering\small\caption{Use case UC-2: Evaluate a candidate}
+\begin{tabular}{|p{3.2cm}|p{11cm}|}\hline
+Use case & Run the evaluation pipeline\\ \hline
+Primary actor & HR reviewer\\ \hline
+Goal in context & Produce a merged panel recommendation and its bias check\\ \hline
+Preconditions & Candidate has applied to a job; no final decision recorded\\ \hline
+Trigger & HR selects \emph{Run evaluation} in the candidate dossier\\ \hline
+Scenario & 1. System loads stored evidence and prior rounds. 2. Three agents run in parallel. 3. Panel Coordinator merges scores with rubric weights and sets a routing label. 4. Bias checker records statistics against the new panel decision. 5. Candidate moves to \emph{awaiting decision}; all outputs are audited.\\ \hline
+Exceptions & Missing assessments: recommendation \emph{additional information required}. Candidate already decided: refused. LLM unavailable: deterministic strategies used.\\ \hline
+Priority & Essential\\ \hline
+\end{tabular}\end{table}
+
+\begin{table}[H]\centering\small\caption{Use case UC-3: Record a decision}
+\begin{tabular}{|p{3.2cm}|p{11cm}|}\hline
+Use case & Record the hiring decision\\ \hline
+Primary actor & HR reviewer (second reviewer when escalated)\\ \hline
+Goal in context & Close or progress the application with an accountable human decision\\ \hline
+Preconditions & Latest panel decision and its bias check exist\\ \hline
+Trigger & HR opens the \emph{Decision} tab\\ \hline
+Scenario & 1. Reviewer inspects scores, evidence and the bias check. 2. Reviewer selects approve, reject or request information and writes a reason. 3. System binds the decision to the panel decision and bias check and audits it. 4. If two reviewers are required, the first sign-off is provisional until a different reviewer agrees.\\ \hline
+Exceptions & Stale panel decision: refused. Note shorter than 10 characters: refused. Same reviewer signing twice: refused.\\ \hline
+Priority & Essential\\ \hline
+\end{tabular}\end{table}
+
+\subsection{Nonfunctional Requirements}
+\begin{itemize}
+\item \textbf{NFR1 Governance:} no code path lets an agent reject or hire; panel labels are restricted to human-review routing.
+\item \textbf{NFR2 Auditability:} every agent output, bias check, configuration change and decision is hash-chained.
+\item \textbf{NFR3 Explainability:} scores carry evidence lines; rubric versions are recorded with each decision.
+\item \textbf{NFR4 Availability without an LLM:} every agent has a deterministic strategy.
+\end{itemize}
+
+\subsubsection{Performance requirements}
+Pipeline runs and assessment scoring complete in seconds on a laptop: in the end-to-end tests, the full evaluation of one candidate completed within the 30-second test timeout, and the whole 9-scenario browser suite completed in about 21 seconds. Sandboxed code has a 4-second CPU budget and a per-test timer.
+
+\subsubsection{Security Requirements}
+Passwords are hashed with bcrypt; JWT sessions expire; candidate code runs with a cleared environment, resource limits, an audit hook that blocks network, process and file-write operations, and expected outputs that never enter the sandbox. Uploaded files are validated by signature and stored under random names. LLM prompts wrap candidate text as untrusted input.
+
+\subsubsection{Usability}
+The interface is responsive down to 375 px wide, shows loading, empty and error states, validates forms inline, and displays all times in IST.
+
+\subsubsection{Privacy}
+Resume screening redacts e-mail addresses, phone numbers and links before LLM calls; cohort labels are never sent to agents.
+
+\section{Software and Hardware requirement specifications}
+\paragraph\
+The system was developed and tested on macOS with Python 3.12 and Node.js 25; it requires Python $\geq$ 3.10 and Node.js $\geq$ 18.
+\begin{itemize}
+\item \textbf{Backend:} FastAPI 0.115, SQLAlchemy 2.0, Pydantic 2.10, LangGraph, PyMuPDF, python-docx, bcrypt, python-jose; SQLite (default) or PostgreSQL 15.
+\item \textbf{Frontend:} React 19, Vite 8, lucide-react; Vitest, Testing Library and Playwright (Chromium) for tests.
+\item \textbf{Optional:} Google Gemini API key for LLM strategies; Docker for the container sandbox and compose deployment.
+\item \textbf{Hardware:} any machine able to run the above (development used a laptop); no GPU is required.
+\end{itemize}

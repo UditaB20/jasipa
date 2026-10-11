@@ -1,0 +1,19 @@
+\begin{tikzpicture}[ent/.style={rectangle split, rectangle split parts=2, draw=line, fill=white, rounded corners=2pt, font=\sffamily\scriptsize, text=ink, align=left, text width=36mm, rectangle split part fill={accentsoft,white}}]
+\node[ent] (jd) at (0,0) {\textbf{job\_descriptions}\nodepart{two}jd\_id PK\\title, required\_skills\\rubric\_version};
+\node[ent] (rub) at (0,-3.2) {\textbf{rubrics}\nodepart{two}rubric\_id PK, jd\_id FK\\version, weights, criteria};
+\node[ent] (qs) at (0,-6.2) {\textbf{question\_sets}\nodepart{two}question\_set\_id PK\\jd\_id FK, rubric\_version\\technical/behavioral JSON};
+\node[ent] (cand) at (5,0) {\textbf{candidates}\nodepart{two}candidate\_id PK\\source, external\_id\\target\_jd\_id FK, cohort\_tag\\resume\_text, current\_stage};
+\node[ent] (scr) at (10,1.4) {\textbf{screening\_results}\nodepart{two}screening\_id PK\\candidate\_id FK, score};
+\node[ent] (asm) at (10,-1.4) {\textbf{assessments}\nodepart{two}assessment\_id PK\\candidate\_id FK, test\_type\\answers, execution\_results};
+\node[ent] (pd) at (5,-4.2) {\textbf{panel\_decisions}\nodepart{two}decision\_id PK\\candidate\_id FK\\merged\_score\\recommendation\\round\_number};
+\node[ent] (bc) at (10,-4.6) {\textbf{bias\_checks}\nodepart{two}check\_id PK\\decision\_id FK\\flag\_status\\cohort\_breakdown};
+\node[ent] (hr) at (5,-8.0) {\textbf{human\_reviews}\nodepart{two}review\_id PK\\decision\_id FK, bias\_check\_id FK\\decision, notes, is\_final};
+\node[ent] (al) at (10,-8.0) {\textbf{audit\_logs}\nodepart{two}log\_id PK, seq\\prev\_hash, entry\_hash\\input, output};
+\draw[draw=muted] (jd) -- node[lbl,left]{1:N} (rub); \draw[draw=muted] (jd.west) -- ++(-0.35,0) |- (qs.west);
+\draw[draw=muted] (jd) -- node[lbl,above]{1:N} (cand);
+\draw[draw=muted] (cand) -- (scr); \draw[draw=muted] (cand) -- (asm);
+\draw[draw=muted] (cand) -- node[lbl,left]{1:N} (pd);
+\draw[draw=muted] (pd) -- node[lbl,above]{1:N} (bc);
+\draw[draw=muted] (pd) -- (hr); \draw[draw=muted] (bc) -- (hr);
+\draw[draw=muted] (cand.east) -- ++(0.6,0) |- (al.west);
+\end{tikzpicture}

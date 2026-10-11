@@ -1,0 +1,38 @@
+\chapter{TESTING}
+
+\paragraph\
+Testing combines automated unit, integration, component and end-to-end tests. The single command \texttt{python scripts/run\_all\_tests.py} runs all suites. It reads each runner's machine-readable results and generates Table \ref{tab:alltests} and the files in \texttt{docs/test-results/}, so every \emph{Actual result} and \emph{Status} comes from an executed run rather than being written by hand. The run reported here was executed on 11 October 2026 (Python 3.12.11, Node 25) without an LLM key, so the deterministic agent strategies were exercised; the LLM paths were tested with a mocked LLM client.
+
+\section{Test Plan and Test Cases}
+
+\subsection{Types of testing}
+\begin{itemize}
+\item \textbf{Unit tests (pytest):} agents and strategies, the question generator, the code sandbox, the fairness statistics (checked against SciPy reference values) and the resume parser.
+\item \textbf{Integration / API tests (pytest + FastAPI TestClient):} authentication and role-based access, file upload and download, dataset import, regeneration, the pipeline, decisions, the two-reviewer rule, the audit chain, MCP JSON-RPC and REST tools. They run against a database seeded from the Kaggle dataset (four records per category).
+\item \textbf{Component tests (Vitest + Testing Library):} formatting (IST, ratios, $p$-values), bias labels, resume rendering, the login page, candidate filters, regeneration feedback and the Panel \& bias card.
+\item \textbf{Acceptance / end-to-end tests (Playwright, Chromium):} nine user journeys against a real backend and frontend, from HR job creation through candidate application, sandboxed coding, the agent pipeline, the bias check and the human decision, to audit verification. These tests also capture the screenshots used in Chapter 7.
+\end{itemize}
+
+\subsection{Unit test plan}
+\begin{table}[H]\centering\small\caption{Unit and integration test plan}
+\begin{tabular}{|p{4.2cm}|p{8.2cm}|r|}\hline
+\textbf{Module} & \textbf{Focus} & \textbf{Cases}\\ \hline
+\texttt{test\_agents} & Resume-Screener, Skill-Assessor, Culture-Fit, Panel Coordinator; LLM fallback & 11\\ \hline
+\texttt{test\_sandbox} & Correct and incorrect code, time-outs, blocked imports, file/network/process access, forged output & 25\\ \hline
+\texttt{test\_question\_generation} & Question types per JD, coding only for programming roles, caching, regeneration & 10\\ \hline
+\texttt{test\_bias} & Fisher and Wilson values, the three states, minimum group size, fragility, scores unchanged & 16\\ \hline
+\texttt{test\_resume\_and\_dataset} & PDF/DOCX extraction, invalid files, sections, Kaggle import, provenance & 18\\ \hline
+\texttt{test\_api\_governance} & RBAC, decisions, two reviewers, audit chain, MCP, IST data contract & 30\\ \hline
+Vitest (7 files) & Formatting, components and pages & 30\\ \hline
+\end{tabular}\end{table}
+
+\subsection{Acceptance test plan}
+The acceptance plan comprises the nine Playwright scenarios E2E-001 to E2E-009 listed at the end of Table \ref{tab:alltests}: login layout, HR sign-in, job creation, regeneration, candidate registration and resume upload, sandboxed assessments, the evaluation with bias check and decision, the dataset record and bias monitor, and responsive navigation. A scenario passes only if every assertion in it holds.
+
+\section{Test Results}
+\input{chapters/test_summary.tex}
+
+\paragraph\
+All 149 test cases passed (Table \ref{tab:testsummary}). While the suite was being built it found real defects, which were fixed before this run: the skill \texttt{C} was matched inside \texttt{C++}; the dataset-record protection was checked after the stage lock, which returned the wrong error; the sidebar lost its sticky position in the grid layout; and the Regenerate button reported success for an identical set. The full test case table follows.
+
+\input{chapters/test_table.tex}
