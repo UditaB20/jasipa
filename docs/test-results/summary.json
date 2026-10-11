@@ -1,0 +1,35 @@
+{
+ "executed_at_utc": "2026-10-11T15:38:02+00:00",
+ "python": "3.12.11",
+ "exit_codes": [
+  0,
+  0,
+  0
+ ],
+ "totals": {
+  "Backend (pytest)": {
+   "total": 110,
+   "Pass": 110,
+   "Fail": 0,
+   "Blocked": 0
+  },
+  "Frontend (Vitest)": {
+   "total": 30,
+   "Pass": 30,
+   "Fail": 0,
+   "Blocked": 0
+  },
+  "End-to-end (Playwright)": {
+   "total": 9,
+   "Pass": 9,
+   "Fail": 0,
+   "Blocked": 0
+  }
+ },
+ "overall": {
+  "total": 149,
+  "Pass": 149,
+  "Fail": 0,
+  "Blocked": 0
+ }
+}

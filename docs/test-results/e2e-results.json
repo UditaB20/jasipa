@@ -1,0 +1,602 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node/25.2.1/bin/node",
+      "/Users/nakul/Desktop/Placement/jasipa/frontend/node_modules/.bin/playwright",
+      "test"
+    ],
+    "configFile": "/Users/nakul/Desktop/Placement/jasipa/frontend/playwright.config.js",
+    "rootDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "chromium",
+        "testDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e",
+        "snapshotDir": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 90000,
+        "use": {
+          "baseURL": "http://localhost:5175",
+          "viewport": {
+            "width": 1280,
+            "height": 800
+          },
+          "trace": "retain-on-failure",
+          "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.8078.4 Safari/537.36",
+          "screen": {
+            "width": 1920,
+            "height": 1080
+          },
+          "deviceScaleFactor": 1,
+          "isMobile": false,
+          "hasTouch": false,
+          "defaultBrowserType": "chromium"
+        },
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": "chromium"
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "../docs/test-results/e2e-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "jasipa.spec.js",
+      "file": "jasipa.spec.js",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "JASIPA end to end",
+          "file": "jasipa.spec.js",
+          "line": 30,
+          "column": 15,
+          "specs": [
+            {
+              "title": "Login page layout — input: load sign-in at 1280×800 and 1024×768 — expected: no vertical or horizontal page scrollbar; no scrolling tab strip",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 927,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:31.535Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-dbad67a1b5459d38a52f",
+              "file": "jasipa.spec.js",
+              "line": 34,
+              "column": 3
+            },
+            {
+              "title": "HR sign-in and dashboard — input: hr@jasipa.ai / admin123 — expected: dashboard counts match the Kaggle import (36 dataset records + 2 demo logins)",
+              "ok": true,
+              "tags": [
+                "jasipa.ai"
+              ],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 787,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:32.734Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-ae1ddeb1348431b073a5",
+              "file": "jasipa.spec.js",
+              "line": 50,
+              "column": 3
+            },
+            {
+              "title": "Job creation form — input: HR creates a Python/SQL/Algorithms job through the New job drawer — expected: job listed with rubric v1.0 and an assessment containing a coding challenge",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1630,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:33.526Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-438cc470343030c789ae",
+              "file": "jasipa.spec.js",
+              "line": 57,
+              "column": 3
+            },
+            {
+              "title": "Assessment regeneration — input: click Regenerate on the new job's Assessment tab — expected: toast reports changed questions and the visible question set id changes",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1002,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:35.162Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-1b0c6d67ddcc859a8eb0",
+              "file": "jasipa.spec.js",
+              "line": 78,
+              "column": 3
+            },
+            {
+              "title": "Candidate registration, resume upload and application — input: register in the portal, upload a PDF resume, apply to the new job — expected: resume shown in sections with a Download original button; application submitted",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1159,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:36.170Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-b4f1fac29d55f0849806",
+              "file": "jasipa.spec.js",
+              "line": 90,
+              "column": 3
+            },
+            {
+              "title": "Candidate assessments with sandboxed code — input: answer MCQs, run code examples, submit technical and STAR behavioral answers — expected: examples pass in the sandbox; both parts show Submitted",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2852,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:37.334Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-f71c4c03a9f7d68a6023",
+              "file": "jasipa.spec.js",
+              "line": 112,
+              "column": 3
+            },
+            {
+              "title": "Agent pipeline, bias check and human decision — input: HR runs the evaluation for the applicant, reviews Panel & bias, approves with a note — expected: panel + bias table shown with IST timestamps; decision recorded; candidate Decided; audit chain verifies",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1893,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:40.193Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-828f6f825014450c2c0d",
+              "file": "jasipa.spec.js",
+              "line": 144,
+              "column": 3
+            },
+            {
+              "title": "Dataset record display and bias monitor — input: open a Kaggle-imported candidate's Resume tab; open Bias monitor — expected: sectioned dataset resume without a download button; bias monitor shows status, cohort definition and missing-cohort count",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1203,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:42.091Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-d3ab31e59bef25c8851c",
+              "file": "jasipa.spec.js",
+              "line": 172,
+              "column": 3
+            },
+            {
+              "title": "Responsive navigation — input: HR dashboard at 375×812 (mobile) — expected: menu button opens the navigation drawer; no horizontal scroll",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [
+                    {
+                      "type": "serial",
+                      "location": {
+                        "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                        "line": 30,
+                        "column": 15
+                      }
+                    }
+                  ],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 790,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-11T15:38:43.299Z",
+                      "annotations": [
+                        {
+                          "type": "serial",
+                          "location": {
+                            "file": "/Users/nakul/Desktop/Placement/jasipa/frontend/e2e/jasipa.spec.js",
+                            "line": 30,
+                            "column": 15
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "83f1698a50ae79632cc9-5fd2518de4d6a54e002d",
+              "file": "jasipa.spec.js",
+              "line": 188,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-11T15:38:23.388Z",
+    "duration": 20846.645,
+    "expected": 9,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

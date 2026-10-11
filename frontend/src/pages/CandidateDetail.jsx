@@ -2,17 +2,19 @@ import { useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, FileText, Play, RefreshCw, Scale, UserCheck, XCircle, HelpCircle, Code2 } from "lucide-react";
 import { downloadResume, getCandidate, getDecisionStatus, getJobs, runFullGraph, runScreenResume, submitDecision } from "../services/api";
 import AuditTimeline from "../components/AuditTimeline";
+import ResumeDocument from "../components/ResumeDocument";
+import { fmtP, fmtRatio } from "../lib/format";
 import {
   Alert, Badge, BiasBadge, BIAS, Card, DECISIONS, EmptyState, ErrorState, Field, PageHeader, PageLoading, RecommendationBadge,
   ScoreBar, Spinner, StageBadge, Tabs, fmtDateTime, fmtScore, latest, useAsync, useToast,
 } from "../components/ui";
 
 const CHECK_LABELS = {
-  decision_rationale_language: "Language in the panel rationale",
-  selection_rate_ai_recommendation: "Selection rates at the AI recommendation stage",
-  selection_rate_human_decision: "Selection rates in final human decisions",
-  outcome_based_fairness: "Post-hire outcomes by cohort",
-  threshold_consistency: "Score thresholds across cohorts",
+  decision_rationale_language: "Rationale language",
+  selection_rate_ai_recommendation: "AI recommendations",
+  selection_rate_human_decision: "Final human decisions",
+  outcome_based_fairness: "Post-hire outcomes",
+  threshold_consistency: "Score thresholds",
 };
 
 export default function CandidateDetail({ candidateId, onDecision }) {
@@ -81,8 +83,8 @@ export default function CandidateDetail({ candidateId, onDecision }) {
     <div className="page">
       <PageHeader
         back={<a className="breadcrumb" href="#/candidates"><ArrowLeft size={13} />Candidates</a>}
-        title={<span className="row wrap" style={{ gap: 10 }}>{c.name}<StageBadge stage={c.current_stage} /></span>}
-        subtitle={`${job ? job.title : "No application"} · ${c.email}${c.experience_years ? ` · ${c.experience_years} yrs experience` : ""}`}
+        title={<span className="row wrap" style={{ gap: 10 }}>{c.name}<StageBadge stage={c.current_stage} />{c.source === "dataset_import" && <Badge tone="outline">Kaggle dataset</Badge>}</span>}
+        subtitle={`${job ? job.title : "No application"} · ${c.source === "dataset_import" ? `dataset row ${c.external_id}` : c.email}${c.experience_years ? ` · ${c.experience_years} yrs experience` : ""}`}
         actions={!decided && (
           <>
             <button className="btn btn-secondary" disabled={!!running || !c.target_jd_id} onClick={() => run("screen")}>
@@ -196,11 +198,16 @@ function Overview({ c, screening, tech, beh, panel, bias, decision, setTab }) {
 function ResumeTab({ c, screening, onDownload }) {
   const p = c.resume_profile || {};
   if (!c.resume_text) return <Card><EmptyState icon={FileText} title="No resume on file">Ask the candidate to upload one in the portal, or add it from the candidates list.</EmptyState></Card>;
+  const fromDataset = c.source === "dataset_import";
+  const subtitle = fromDataset ? `Imported from the Kaggle Resume Dataset · row ${c.external_id} · category ${c.dataset_category}`
+    : c.resume_original_filename ? `${c.resume_original_filename}${p.extraction_confidence != null ? ` · extraction confidence ${Math.round(p.extraction_confidence * 100)}%` : ""}`
+    : "Entered as text";
   return (
     <div className="split">
-      <Card title="Resume text" subtitle={c.resume_original_filename ? `${c.resume_original_filename}${p.extraction_confidence != null ? ` · extraction confidence ${Math.round(p.extraction_confidence * 100)}%` : ""}` : "Entered as text"}
-        actions={c.resume_original_filename && <button className="btn btn-secondary btn-sm" onClick={onDownload}><Download size={13} />Original file</button>}>
-        <div className="resume-text">{c.resume_text}</div>
+      <Card title="Resume" subtitle={subtitle}
+        actions={c.has_original_file && <button className="btn btn-secondary btn-sm" onClick={onDownload}><Download size={13} />Download original</button>}>
+        <ResumeDocument sections={c.resume_sections} text={c.resume_text} />
+        {fromDataset && <p className="xs dim mt-16">Dataset records have no uploaded file; the text is rebuilt from the dataset's HTML resume.</p>}
       </Card>
       <div className="stack">
         {screening && (
@@ -218,7 +225,6 @@ function ResumeTab({ c, screening, onDownload }) {
           <dl className="kv">
             <dt>Experience</dt><dd>{p.experience_years ? `${p.experience_years} years (${p.experience_source === "stated" ? "stated" : "from dates"})` : "Not found"}</dd>
             <dt>Education</dt><dd>{(p.education || []).length ? <ul className="list">{p.education.map((e, i) => <li key={i}>{e}</li>)}</ul> : "—"}</dd>
-            <dt>Roles</dt><dd>{(p.experience_entries || []).length ? <ul className="list">{p.experience_entries.map((e, i) => <li key={i}>{e.summary}</li>)}</ul> : "—"}</dd>
             <dt>Projects</dt><dd>{(p.projects || []).length ? <ul className="list">{p.projects.map((e, i) => <li key={i}>{e}</li>)}</ul> : "—"}</dd>
           </dl>
         </Card>
@@ -276,7 +282,7 @@ function ExecutionSummary({ result }) {
     <div className="mt-8 stack-sm">
       <div className="row small"><Code2 size={14} />
         {ok ? <span><strong className="num">{result.passed}/{result.total}</strong> sandboxed tests passed ({result.tests.filter((t) => t.hidden).length} hidden)</span>
-          : <span style={{ color: "#ef8a84" }}>{result.status.replace(/_/g, " ").toLowerCase()}: {result.compile_error || result.error}</span>}
+          : <span className="text-danger">{result.status.replace(/_/g, " ").toLowerCase()}: {result.compile_error || result.error}</span>}
       </div>
       {ok && (
         <div className="chips">
@@ -293,38 +299,59 @@ function ExecutionSummary({ result }) {
 
 function PanelTab({ panel, bias }) {
   if (!panel) return <Card><EmptyState icon={Scale} title="No panel evaluation yet">Run the evaluation to merge the three agents' scores and record a bias check.</EmptyState></Card>;
-  const checks = bias?.cohort_breakdown?.checks || [];
   return (
-    <div className="split">
-      <Card title="Panel recommendation" subtitle={`Round ${panel.round_number || 1} · ${fmtDateTime(panel.created_at)}`}>
-        <div className="stack">
-          <div className="row"><RecommendationBadge value={panel.recommendation} />{panel.requires_four_eyes_review && <Badge tone="warning">Two reviewers required</Badge>}</div>
+    <div className="stack">
+      <Card title="Panel recommendation" subtitle={`Round ${panel.round_number || 1} · ${fmtDateTime(panel.created_at)}`}
+        actions={<div className="row"><RecommendationBadge value={panel.recommendation} />{panel.requires_four_eyes_review && <Badge tone="warning">Two reviewers required</Badge>}</div>}>
+        <div className="grid grid-2">
           <div className="stack-sm">
             <ScoreBar label="Resume" value={panel.resume_score} />
             <ScoreBar label="Technical" value={panel.skill_score} />
             <ScoreBar label="Behavioral" value={panel.culture_score} />
             <ScoreBar label="Merged" value={panel.merged_score} />
           </div>
-          <p className="xs dim">The merge uses the rubric weights in plain code. The system only routes candidates to a reviewer; it cannot approve or reject.</p>
           <div><div className="section-title">Evidence cited</div><ul className="list">{panel.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul></div>
         </div>
       </Card>
-      <Card title="Bias check for this decision" subtitle={bias ? fmtDateTime(bias.created_at) : "Not recorded"} actions={bias && <BiasBadge value={bias.flag_status} />}>
-        {!bias ? <p className="muted small">No bias check is recorded for this panel decision.</p> : (
-          <div className="stack">
-            <p className="small">{bias.reason}</p>
-            {checks.map((check) => (
-              <div key={check.check_type} className="inset">
-                <div className="row-between"><span className="small" style={{ fontWeight: 550 }}>{CHECK_LABELS[check.check_type] || check.check_type}</span><BiasBadge value={check.flag_status} /></div>
-                <p className="xs muted mt-4">{check.reason}</p>
-              </div>
-            ))}
-            {(bias.cohort_breakdown?.recommendations || []).length > 0 && <ul className="list">{bias.cohort_breakdown.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>}
-            <p className="xs dim">Bias checks never change scores or routing. An indicator is a prompt to look closer; "insufficient data" is not evidence of fairness.</p>
-          </div>
-        )}
-      </Card>
+      <BiasCheckCard bias={bias} />
     </div>
+  );
+}
+
+export function BiasCheckCard({ bias }) {
+  if (!bias) return <Card title="Bias check"><p className="muted small">No bias check is recorded for this panel decision.</p></Card>;
+  const breakdown = bias.cohort_breakdown || {};
+  const checks = breakdown.checks || [];
+  const pool = checks.find((c) => c.pool_summary && ["STATISTICALLY_SUPPORTED_DISPARITY", "POTENTIAL_DISPARITY_INDICATOR"].includes(c.pool_status));
+  const cohort = breakdown.candidate_cohort;
+  return (
+    <Card title="Bias check for this decision" subtitle={`${fmtDateTime(bias.created_at)} · candidate cohort: ${cohort || "not recorded"}`}
+      actions={<BiasBadge value={bias.flag_status} showQualifier />} pad={false}>
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Check</th><th>Result</th><th>Cohort</th><th className="right">n</th><th className="right">Impact ratio</th><th className="right">Fisher p</th></tr></thead>
+          <tbody>
+            {checks.map((check) => {
+              const g = check.group;
+              return (
+                <tr key={check.check_type} title={check.reason}>
+                  <td className="cell-title">{CHECK_LABELS[check.check_type] || check.check_type}</td>
+                  <td><BiasBadge value={check.flag_status} checkType={check.check_type} showQualifier /></td>
+                  <td className="muted">{g?.cohort_name || "—"}</td>
+                  <td className="right num">{g ? g.n : check.check_type === "decision_rationale_language" ? "—" : check.sample_size ?? "—"}</td>
+                  <td className="right num">{fmtRatio(g?.impact_ratio)}</td>
+                  <td className="right num">{fmtP(g?.fisher_p_value)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="card-body stack-sm" style={{ borderTop: "1px solid var(--border)" }}>
+        {pool && <p className="small"><strong>Pool-wide:</strong> {pool.pool_summary}</p>}
+        <p className="xs dim">A disparity is reported only when the four-fifths screen is triggered with at least the minimum cohort size; significance is shown as a qualifier. Insufficient data is not evidence of fairness. Bias checks never change scores, routing or decisions. Hover a row for its detail.</p>
+      </div>
+    </Card>
   );
 }
 

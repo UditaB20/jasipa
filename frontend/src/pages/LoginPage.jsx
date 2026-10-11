@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { login, register } from "../services/api";
-import { Alert, Field, Spinner, Tabs } from "../components/ui";
+import { Alert, Field, Spinner } from "../components/ui";
 
 const DEMO_ACCOUNTS = [
   { label: "HR lead", email: "hr@jasipa.ai", password: "admin123" },
   { label: "Second reviewer", email: "reviewer@jasipa.ai", password: "reviewer123" },
-  { label: "Candidate, assessments open", email: "student@jasipa.ai", password: "student123" },
-  { label: "Candidate, decided", email: "candidate@jasipa.ai", password: "candidate123" },
+  { label: "Candidate (demo login)", email: "student@jasipa.ai", password: "student123" },
+  { label: "Second candidate (demo)", email: "candidate@jasipa.ai", password: "candidate123" },
 ];
 
 export default function LoginPage({ onLogin, sessionExpired }) {
@@ -37,8 +37,8 @@ export default function LoginPage({ onLogin, sessionExpired }) {
 
   return (
     <div className="auth">
-      <div style={{ width: "100%", maxWidth: 400 }}>
-        <div className="row mb-24" style={{ justifyContent: "center" }}>
+      <div className="auth-inner">
+        <div className="row" style={{ justifyContent: "center", marginBottom: 20 }}>
           <div className="brand-mark">J</div>
           <div>
             <div className="brand-name">JASIPA</div>
@@ -46,8 +46,12 @@ export default function LoginPage({ onLogin, sessionExpired }) {
           </div>
         </div>
         <div className="card auth-card">
-          <Tabs active={mode} onChange={(m) => { setMode(m); setError(null); }}
-            tabs={[{ id: "signin", label: "Sign in" }, { id: "register", label: "Create candidate account" }]} />
+          <div className="segmented" role="tablist" aria-label="Account">
+            {[["signin", "Sign in"], ["register", "Create candidate account"]].map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={mode === id} className={mode === id ? "active" : ""}
+                onClick={() => { setMode(id); setError(null); }}>{label}</button>
+            ))}
+          </div>
           {sessionExpired && !error && <div className="mb-16"><Alert tone="warning">Your session expired. Sign in again to continue.</Alert></div>}
           {error && <div className="mb-16"><Alert tone="danger">{error}</Alert></div>}
           <form onSubmit={submit} className="stack" noValidate={false}>
@@ -75,12 +79,12 @@ export default function LoginPage({ onLogin, sessionExpired }) {
         </div>
 
         {import.meta.env.DEV && mode === "signin" && (
-          <div className="mt-24">
-            <div className="xs dim mb-4" style={{ marginBottom: 8 }}>Demo accounts (development build only)</div>
+          <div style={{ marginTop: 16 }}>
+            <div className="xs dim" style={{ marginBottom: 8 }}>Demo accounts (development build only)</div>
             <div className="demo-accounts">
               {DEMO_ACCOUNTS.map((a) => (
                 <button key={a.email} type="button" className="demo-account" onClick={() => setForm({ ...form, email: a.email, password: a.password })}>
-                  <span>{a.label}</span><span className="mono dim">{a.email}</span>
+                  <span>{a.label}</span><span>{a.email}</span>
                 </button>
               ))}
             </div>

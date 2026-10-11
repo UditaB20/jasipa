@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { biasPresentation } from "../lib/format";
 import { AlertTriangle, CheckCircle2, Info, X, XCircle, Inbox, RefreshCw } from "lucide-react";
 
 /* ---------- Labels ---------- */
@@ -24,10 +25,10 @@ export const RECOMMENDATIONS = {
 };
 
 export const BIAS = {
-  STATISTICALLY_SUPPORTED_DISPARITY: { label: "Supported disparity", tone: "danger" },
-  POTENTIAL_DISPARITY_INDICATOR: { label: "Disparity indicator", tone: "warning" },
+  STATISTICALLY_SUPPORTED_DISPARITY: { label: "Disparity detected", tone: "danger" },
+  POTENTIAL_DISPARITY_INDICATOR: { label: "Disparity detected", tone: "warning" },
   INSUFFICIENT_DATA: { label: "Insufficient data", tone: "" },
-  NO_INDICATOR_DETECTED: { label: "No indicator", tone: "success" },
+  NO_INDICATOR_DETECTED: { label: "No indicator detected", tone: "success" },
   REFERENCE_GROUP: { label: "Reference group", tone: "accent" },
 };
 
@@ -54,9 +55,15 @@ export const RecommendationBadge = ({ value }) => {
   const r = RECOMMENDATIONS[value];
   return r ? <Badge tone={r.tone} title={r.text}>{r.label}</Badge> : <span className="dim">—</span>;
 };
-export const BiasBadge = ({ value }) => {
-  const b = BIAS[value];
-  return b ? <Badge tone={b.tone}>{b.label}</Badge> : <span className="dim">—</span>;
+export const BiasBadge = ({ value, checkType, showQualifier = false }) => {
+  if (!value) return <span className="dim">—</span>;
+  const b = biasPresentation(value, checkType);
+  return (
+    <span className="row" style={{ gap: 6, display: "inline-flex" }}>
+      <Badge tone={b.tone} title={b.qualifier || undefined}>{b.label}</Badge>
+      {showQualifier && b.qualifier && <span className="xs dim">{b.qualifier}</span>}
+    </span>
+  );
 };
 
 /* ---------- Layout ---------- */
@@ -275,8 +282,4 @@ export function ToastProvider({ children }) {
 
 /* ---------- Formatting ---------- */
 
-export const fmtDate = (value) => (value ? new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—");
-export const fmtDateTime = (value) => (value ? new Date(value).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
-export const fmtScore = (value) => (value == null ? "—" : Number(value).toFixed(1));
-export const initials = (name = "") => name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "?";
-export const latest = (list) => (list && list.length ? list[list.length - 1] : null);
+export { fmtDate, fmtDateTime, fmtScore, initials, latest } from "../lib/format";

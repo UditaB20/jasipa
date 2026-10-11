@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Briefcase, CheckCircle2, FileText, Play, Send, Upload } from "lucide-react";
+import { Briefcase, CheckCircle2, Download, FileText, Play, Send, Upload } from "lucide-react";
+import ResumeDocument from "../components/ResumeDocument";
 import {
-  applyCandidateJob, getCandidateAssessments, getCandidateJobs, getCandidateProfile, getCandidateTimeline,
+  applyCandidateJob, downloadMyResume, getCandidateAssessments, getCandidateJobs, getCandidateProfile, getCandidateTimeline,
   runSampleTests, submitCandidateBehavioral, submitCandidateTechnical, updateCandidateProfile, uploadCandidateResume,
 } from "../services/api";
 import { Alert, Badge, Card, EmptyState, ErrorState, Field, PageHeader, PageLoading, Spinner, useAsync, useToast } from "../components/ui";
@@ -267,6 +268,16 @@ function ProfileSection({ profile, onChange }) {
       setUploading(false);
     }
   };
+  const download = async () => {
+    try {
+      const blob = await downloadMyResume();
+      const url = URL.createObjectURL(blob);
+      Object.assign(document.createElement("a"), { href: url, download: profile.resume_filename || "resume" }).click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  };
   const save = async (e) => {
     e.preventDefault();
     setSaving(true);
@@ -298,12 +309,17 @@ function ProfileSection({ profile, onChange }) {
           {profile.has_resume && (
             <>
               <hr className="divider" />
-              <div className="section-title">What we read from your resume</div>
+              <div className="row-between mb-16">
+                <div className="section-title" style={{ margin: 0 }}>Your resume as we read it</div>
+                {profile.has_original_file && <button className="btn btn-secondary btn-sm" onClick={download}><Download size={13} />Download original</button>}
+              </div>
+              <ResumeDocument sections={profile.resume_sections} text={profile.resume_text} />
+              <hr className="divider" />
+              <div className="section-title">Extracted details</div>
               <dl className="kv">
                 <dt>Skills</dt><dd><div className="chips">{(profile.skills_extracted || []).map((s) => <span key={s} className="chip">{s}</span>)}{!profile.skills_extracted?.length && <span className="dim">None recognised</span>}</div></dd>
                 <dt>Experience</dt><dd>{p.experience_years ? `${p.experience_years} years` : "Not found"}</dd>
                 <dt>Education</dt><dd>{(p.education || []).join("; ") || profile.education || "Not found"}</dd>
-                <dt>Projects</dt><dd>{(p.projects || []).length ? <ul className="list">{p.projects.map((x, i) => <li key={i}>{x}</li>)}</ul> : "None listed"}</dd>
               </dl>
               <p className="xs dim mt-12">If something is missing, update your resume and upload it again. Contact details are not used in scoring.</p>
             </>

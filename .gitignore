@@ -52,3 +52,8 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# End-to-end test artefacts
+backend/e2e_uploads/
+frontend/test-results/
+frontend/playwright-report/

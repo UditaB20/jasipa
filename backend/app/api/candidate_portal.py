@@ -60,6 +60,7 @@ def _profile(cand: Candidate) -> dict:
         "skills_extracted": cand.skills_extracted or [], "resume_profile": cand.resume_profile or {},
         "resume_filename": cand.resume_original_filename, "has_resume": bool(cand.resume_text),
         "has_original_file": resume_file_path(cand) is not None,
+        "resume_sections": cand.resume_sections, "resume_text": cand.resume_text,
         "target_jd_id": cand.target_jd_id, "current_stage": cand.current_stage,
         "created_at": cand.created_at.isoformat() if cand.created_at else None,
     }

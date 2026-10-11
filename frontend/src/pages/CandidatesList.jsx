@@ -9,6 +9,7 @@ const FILTERS = [
   { id: "in_progress", label: "In progress", stages: ["APPLIED", "RESUME_SCREENED", "TECHNICAL_ASSESSED", "BEHAVIORAL_ASSESSED", "INFO_REQUESTED", "MANUAL_REVIEW_REQUIRED"] },
   { id: "decided", label: "Decided", stages: ["DECIDED"] },
 ];
+const SOURCES = [["", "All sources"], ["dataset_import", "Kaggle dataset"], ["candidate_portal", "Candidate portal"], ["hr_upload", "HR upload"]];
 const ACCEPTED = [".pdf", ".docx"];
 const MAX_MB = 5;
 
@@ -16,6 +17,7 @@ export default function CandidatesList({ initialFilter = "" }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState(FILTERS.some((f) => f.id === initialFilter) ? initialFilter : "");
   const [jobFilter, setJobFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const { data, loading, error, reload } = useAsync(() => Promise.all([getCandidates(), getJobs()]), []);
 
@@ -27,15 +29,16 @@ export default function CandidatesList({ initialFilter = "" }) {
     return candidates.filter((c) =>
       (!stages || stages.includes(c.current_stage)) &&
       (!jobFilter || c.target_jd_id === jobFilter) &&
+      (!sourceFilter || (c.source || "hr_entry") === sourceFilter) &&
       (!q || c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || (c.skills_extracted || []).some((s) => s.toLowerCase().includes(q))));
-  }, [candidates, filter, jobFilter, search]);
+  }, [candidates, filter, jobFilter, sourceFilter, search]);
 
   if (loading && !data) return <PageLoading />;
   if (error) return <ErrorState error={error} onRetry={reload} />;
 
   return (
     <div className="page">
-      <PageHeader title="Candidates" subtitle="Applicants from the candidate portal and resumes uploaded by your team."
+      <PageHeader title="Candidates" subtitle="Kaggle dataset records, applicants from the candidate portal, and resumes uploaded by your team."
         actions={<button className="btn btn-primary" onClick={() => setAdding(true)}><UserPlus size={15} />Add candidate</button>} />
 
       <div className="row wrap mb-16">
@@ -45,6 +48,9 @@ export default function CandidatesList({ initialFilter = "" }) {
         </div>
         <select className="select" style={{ width: 190 }} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by stage">
           {FILTERS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        </select>
+        <select className="select" style={{ width: 170 }} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} aria-label="Filter by source">
+          {SOURCES.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
         <select className="select" style={{ width: 230 }} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} aria-label="Filter by job">
           <option value="">All jobs</option>
@@ -67,7 +73,7 @@ export default function CandidatesList({ initialFilter = "" }) {
                   <tr key={c.candidate_id} className="clickable" onClick={() => { window.location.hash = `/candidates/${c.candidate_id}`; }}>
                     <td>
                       <a className="cell-title" style={{ color: "var(--text)" }} href={`#/candidates/${c.candidate_id}`}>{c.name}</a>
-                      <div className="cell-sub">{c.email}</div>
+                      <div className="cell-sub">{c.source === "dataset_import" ? `Kaggle dataset · ${c.dataset_category}` : c.email}</div>
                     </td>
                     <td className="hide-sm muted">{jobTitle[c.target_jd_id] || "No application"}</td>
                     <td className="hide-sm num muted">{c.experience_years ? `${c.experience_years} yrs` : "—"}</td>

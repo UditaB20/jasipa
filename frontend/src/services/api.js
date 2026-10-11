@@ -101,6 +101,7 @@ export const uploadCandidateResume = (file) => {
   form.append("file", file);
   return request("/candidate/upload-resume", { method: "POST", form });
 };
+export const downloadMyResume = () => request("/candidate/resume");
 export const getCandidateApplications = () => request("/candidate/applications");
 export const getCandidateJobs = () => request("/candidate/jobs");
 export const applyCandidateJob = (jd_id) => post("/candidate/apply", { jd_id });
