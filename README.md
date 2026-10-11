@@ -1,213 +1,101 @@
-# Job Applicant Screening & Interview Panel Agent (JASIPA)
+# JASIPA — Job Applicant Screening & Interview Panel Agent
 
-**JASIPA** is an HR-side agentic AI system for candidate evaluation that adheres strictly to human-in-the-loop governance:
+JASIPA takes a candidate from resume screening through skill assessment to an interview-panel recommendation, runs a bias check against every merged decision, and leaves the final decision to a person.
 
-> **Critical Governance Rule:**  
-> **The AI must NEVER autonomously reject or hire a candidate.**  
-> AI agents score candidates, identify strengths/gaps, synthesize recommendations, and flag statistical bias, but the final hiring decision is always signed by an authenticated human reviewer.
+> **Governance rule:** the system never rejects or hires anyone. Agents score evidence and route candidates to a reviewer; every application is closed by an authenticated HR reviewer, with the bias check for that exact panel decision recorded alongside the decision in a tamper-evident audit log.
 
----
-
-## 1. System Architecture
+## Workflow
 
 ```mermaid
-flowchart TD
-    HR["HR / Recruiter"] -->|1. Create JD| JD[Job Description]
-    JD -->|2. Generate Anchored Rubric| Rubric[JD-Anchored Rubric v1.0]
-    
-    Candidate["Candidate / ATS"] -->|3. Submit PDF Resume| ResumeUpload[Resume Parser PyMuPDF]
-    ResumeUpload -->|Extracted Text| ScreenerAgent[4. Resume-Screener Agent]
-    Rubric --> ScreenerAgent
-    
-    JD -->|Generate Tech Test| TechAssessment[5. Technical Assessment MCQ/SQL/Coding]
-    Candidate -->|Submit Tech Answers| SkillAgent[6. Skill-Assessor Agent]
-    
-    Rubric -->|STAR Competencies| BehAssessment[7. Standardized Behavioral Assessment]
-    Candidate -->|Submit STAR Answers| CultureAgent[8. Culture-Fit / Behavioral Agent]
-    
-    ScreenerAgent -->|Screening Score & Evidence| PanelCoord[9. Panel Coordinator]
-    SkillAgent -->|Skill Score & Breakdown| PanelCoord
-    CultureAgent -->|Behavioral Score & Evidence| PanelCoord
-    Rubric --> PanelCoord
-    
-    PanelCoord -->|Merged Synthesis & Recommendation| BiasCheck[10. Bias Checker Cohort Disparities]
-    
-    BiasCheck -->|Audit Warning / Cleared| ReviewQueue[11. Human Review Queue]
-    
-    ReviewQueue -->|Complete Evidence Docket| HumanReviewer["12. Authenticated Human Reviewer"]
-    HumanReviewer -->|APPROVE / REJECT / REQUEST_INFO| FinalDecision[Final Human Decision]
-    
-    FinalDecision --> AuditLog[(13. Immutable Audit Log & Memory)]
-    subgraph Orchestration["LangGraph Workflow Nodes"]
-        ScreenerNode["screening_node"]
-        SkillNode["skill_node"]
-        CultureNode["culture_node"]
-        PanelNode["panel_node"]
-        BiasNode["bias_node"]
+flowchart LR
+    JD[Job + versioned rubric] --> QG[QuestionGenerationAgent]
+    R[Resume PDF/DOCX] --> P[Parser: skills, education, experience, projects]
+    QG --> A[Candidate assessments: MCQ, coding, scenario, STAR]
+    A --> SB[Sandboxed code execution]
+    subgraph Swarm["LangGraph swarm"]
+      S[Resume-Screener]
+      K[Skill-Assessor]
+      C[Culture-Fit]
     end
-    ScreenerNode -.->|Persist State| MCP[MCP ATS Connector Tools]
-    SkillNode -.->|Persist State| MCP
-    CultureNode -.->|Persist State| MCP
-    PanelNode -.->|Persist State| MCP
-    BiasNode -.->|Persist State| MCP
-    MCP <--> AuditLog
+    P --> S
+    SB --> K
+    A --> C
+    S & K & C --> PC[Panel Coordinator]
+    PC --> B[Bias check]
+    B --> H[Human decision\n1 or 2 reviewers]
+    H --> L[(Audit log + candidate history)]
 ```
 
----
+| Component | Implementation |
+| --- | --- |
+| Tools | `resume_screen` → `ResumeScreenerAgent`, `skill_assess` → `SkillAssessorAgent` (+ code sandbox), `bias_check` → `BiasCheckerAgent` |
+| Skill (rubric) | Versioned, JD-anchored rubric per job (`rubrics` table). Editing creates a new version; past decisions keep theirs. |
+| Memory | Candidate stage machine, per-round panel history (`round_number`) fed back into the panel, full audit history. |
+| Connector (MCP) | ATS tools over MCP stdio (`python -m app.mcp.stdio_server`) and `/api/mcp`. Recording a human decision is not exposed. |
+| Orchestration | LangGraph: dispatch → (screen, skills, culture in parallel) → panel coordinator → bias check. Nodes are pure; persistence happens sequentially in the fan-in. |
+| Governance | Panel can only route (`PROCEED_TO_HUMAN_REVIEW`, `HUMAN_REVIEW_REQUIRED`, `ADDITIONAL_INFORMATION_REQUIRED`). Escalated decisions require two different reviewers who agree. |
 
-## 2. Specialized Multi-Agent Separation
+## Key behaviour
 
-1. **Resume-Screener Agent (`resume_screener.py`)**:
-   - *Question:* "What does the candidate's resume/background indicate?"
-   - Evaluates matched vs missing JD skills, years of experience, education, and projects against the anchored rubric.
-   - Outputs structured evidence citations and fit score (0–100).
+**Question generation.** `QuestionGenerationAgent` builds each job's assessment from its responsibilities, required skills, proficiency level (from minimum experience) and rubric competencies: MCQs, a coding challenge (only when required skills involve programming), scenario questions tied to stated responsibilities, and one STAR question per rubric competency. With an LLM configured, generated items are schema-validated and coding challenges are accepted only if their reference solution passes their own tests in the sandbox; otherwise a deterministic skill-driven generator is used. Sets are cached per job + rubric version, and each applicant is pinned to the set they were shown.
 
-2. **Skill-Assessor Agent (`skill_assessor.py`)**:
-   - *Question:* "What technical ability did the candidate demonstrate in an assessment?"
-   - Evaluates submitted answers to practical technical questions (MCQ, SQL syntax, and graph cycle detection with algorithmic complexity).
-   - Does NOT re-read the resume; measures demonstrated competence.
+**Code execution.** Candidate code runs in a separate interpreter with a cleared environment, empty working directory, CPU/memory/file-size/process limits, an irremovable audit hook blocking network, subprocess, file-write and filesystem-listing operations, a restricted import list, and per-test plus wall-clock time limits. Expected outputs never enter the sandbox; results are judged in the parent. `SANDBOX_BACKEND=docker` adds a network-less, read-only container. Candidates can run the visible examples (rate limited); hidden tests run on submission.
 
-3. **Culture-Fit / Behavioral Agent (`culture_fit.py`)**:
-   - *Question:* "How did the candidate handle past workplace situations using the STAR method?"
-   - Evaluates responses to standardized behavioral questions (Communication, Team Collaboration, Problem Solving, Adaptability).
-   - Never infers soft skills from resumes; rejects demographic bias; returns `INSUFFICIENT_EVIDENCE` for brief/evasive answers.
+**Bias checks.** Selection rates by cohort at the AI recommendation and human decision stages with Wilson intervals, four-fifths impact ratios, Fisher's exact tests, minimum group sizes and fragility flags. Results distinguish *indicators* from *statistically supported* disparities and never treat insufficient data as evidence of fairness. See [backend/docs/BIAS_AND_OUTCOMES.md](backend/docs/BIAS_AND_OUTCOMES.md).
 
-4. **Panel Coordinator Agent (`panel_coordinator.py`)**:
-   - Merges the three independent agent perspectives according to rubric weights (40% Resume + 40% Technical + 20% Behavioral).
-   - Identifies candidate strengths, gaps, and perspective divergences (e.g. resume buzzwords vs test score mismatch).
-   - Recommendation values: `PROCEED_TO_HUMAN_REVIEW`, `HUMAN_REVIEW_REQUIRED`, `ADDITIONAL_INFORMATION_REQUIRED` (Never `AUTO_REJECT`).
+**Resume upload.** HR (new or existing candidate) and candidates (self-service) can upload PDF or DOCX up to 5 MB. Files are validated by extension and signature, stored under random names, never served statically, and parsed into skills, education, experience (stated or from dated roles) and projects. Active applications are re-screened automatically; resumes are locked once a panel evaluation exists.
 
-5. **Bias Checker Agent (`bias_checker.py`)**:
-   - Evaluates candidate outcomes against historical cohort statistics using the 4/5ths (80%) disparate impact standard.
-   - Generates audit warning banners for the Human Reviewer without altering or auto-rejecting candidate data.
+## Running locally
 
----
+Requirements: Python 3.10+ and Node 18+.
 
-## 3. Model Context Protocol (MCP) ATS Tools
-
-Agents access and mutate candidate pipeline records through standard MCP ATS tools:
-* `get_candidate(candidate_id)`
-* `get_job_description(jd_id)`
-* `get_candidate_pipeline_status(candidate_id)`
-* `save_screening_result(...)`
-* `save_assessment_result(...)`
-* `save_panel_decision(...)`
-* `save_bias_check(...)`
-* `save_human_review(...)`
-* `get_candidate_history(candidate_id)`
-
----
-
-## 4. Local Quickstart
-
-### Prerequisites
-* Python 3.10+
-* Node.js 18+ (with npm)
-* Docker & Docker Compose (optional for containerized deployment)
-
-### 1. Backend Setup
 ```bash
 cd backend
-pip install -r requirements.txt
-python scripts/seed_data.py
-uvicorn app.main:app --reload --port 8000
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/seed_data.py
+LLM_PROVIDER=mock .venv/bin/uvicorn app.main:app --reload --port 8000
 ```
-API Documentation will be live at: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-### 2. Frontend Setup
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Recruiter Portal will be live at: [http://localhost:5173](http://localhost:5173)
 
----
+Open http://localhost:5173. The seed script resets the database and creates three jobs and 22 candidates by running the real pipeline. Demo accounts (also shown on the sign-in page in development builds):
 
-## 5. Docker Deployment
+| Account | Password | Use |
+| --- | --- | --- |
+| hr@jasipa.ai | admin123 | HR reviewer |
+| reviewer@jasipa.ai | reviewer123 | Second reviewer for two-reviewer decisions |
+| student@jasipa.ai | student123 | Candidate with assessments open |
+| candidate@jasipa.ai | candidate123 | Candidate with a recorded decision |
 
-To launch PostgreSQL, FastAPI Backend, and React Frontend in Docker containers:
+Set `GEMINI_API_KEY` and `LLM_PROVIDER=gemini` to enable LLM scoring, question generation and summaries; everything works without them. Set `SECRET_KEY` outside local development (a random per-process key is used otherwise, so sessions reset on restart). See `.env.example` for all settings.
+
+Import resumes from the Kaggle dataset: `.venv/bin/python scripts/import_dataset.py ../Resume.csv --limit 20`.
+
+### Docker
+
 ```bash
-docker-compose up --build
-```
-* Frontend: [http://localhost:5173](http://localhost:5173)
-* Backend API: [http://localhost:8000](http://localhost:8000)
-* PostgreSQL: `localhost:5432`
-
----
-
-## 6. Running Tests
-
-Run the full pytest suite for agents, governance rules, and MCP tools:
-```bash
-cd backend
-python -m pytest tests/
+SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))") docker compose up --build
 ```
 
----
+`SEED_DEMO_DATA=true` (default) resets and seeds the database on every backend start; set it to `false` to keep data.
 
-## 7. Demo Walkthrough Scenario (Steps 1 to 13)
+## Tests
 
-1. **Step 1:** Recruiter creates "Senior Full Stack Engineer" Job Description.
-2. **Step 2:** System generates versioned JD-anchored Rubric v1.0.
-3. **Step 3:** Candidate uploads PDF resume; PyMuPDF extracts text and metadata.
-4. **Step 4:** Resume-Screener Agent evaluates resume fit and evidence citations.
-5. **Step 5:** Candidate completes technical assessment in the Assessment Room.
-6. **Step 6:** Skill-Assessor Agent scores demonstrated technical answers.
-7. **Step 7:** Candidate completes standardized behavioral STAR questions.
-8. **Step 8:** Culture-Fit Agent evaluates behavioral competencies.
-9. **Step 9:** Panel Coordinator merges all 3 scores and formulates recommendation.
-10. **Step 10:** Bias Checker checks cohort parity and logs warning/cleared report.
-11. **Step 11:** Human Reviewer inspects complete evidence dossier.
-12. **Step 12:** Human Reviewer signs off with `APPROVE` / `REJECT` / `REQUEST_MORE_INFORMATION` with notes.
-13. **Step 13:** System logs complete immutable audit trail.
----
+```bash
+cd backend && .venv/bin/python -m pytest
+```
 
-## 8. Hiring Outcomes and Historical Context
+The suite runs against an isolated, freshly seeded SQLite database and covers authentication and data isolation, sandbox correctness and escape attempts, question generation and validation, resume parsing and upload errors, small-cohort statistics, the end-to-end pipeline, two-reviewer decisions, MCP, and audit-chain tamper detection.
 
-JASIPA includes an HR-only outcome tracking flow at **Hiring Outcomes**. HR can record hire date, manager-reported performance (1–5), employment status, tenure, promotion date, attrition reason, and feedback for candidates with a human `APPROVE` decision. The outcome can be updated as new information arrives. Aggregate analytics are available at `GET /api/learning/analytics`.
+## Known limitations
 
-The human review queue shows an uncalibrated score-agreement heuristic and, when data is available, a descriptive comparison against prior hires in the same job with resume, technical, and behavioral scores within five points. A historical success rate is shown only when at least five similar hires have recorded outcome data; success is defined here as still employed and, when a rating exists, rating at least 3.5/5. These figures are descriptive and must not be treated as a probability or automated recommendation.
-
-The outcomes page labels performance on a 1–5 scale, shows the number of known employment statuses next to retention, warns on small samples, and lists each outcome beside the latest panel scores. New outcome submissions require a past hire date, manager rating, explicit employment status, and tenure from 0 to 120 months; manager name and feedback are optional, as is a promotion date. HR can select an existing record to update it. Candidate names, emails, or cohorts marked with a standalone `test`, `demo`, `mock`, or `e2e` marker are omitted from outcome analytics and tracking.
-
-This initial learning increment does not automatically change rubric weights or role thresholds, and it does not claim per-question effectiveness: submitted assessments currently store aggregate scores rather than a structured score for each question. Outcome data is self-reported by HR/manager and should be interpreted with its coverage in mind. Human approval remains mandatory.
-
----
-
-## 10. Key Design Differences from README
-
-| Aspect | README Claims | Actual Code |
-|---|---|---|
-| **MCP Usage** | Agents call MCP tools | MCP tools are NOT called by agents; tools are called BY nodes AFTER agents complete |
-| **LLM in Agents** | "Agents evaluate using..." | LLM (Gemini) is called, but every agent has a deterministic FALLBACK if LLM fails |
-| **LLM Tool Use** | Agents use tools | NO agent uses tools directly. LLM only generates JSON responses; agents parse them |
-| **LangGraph** | Implied implicit | Explicit: `StateGraph(CandidateState)` with 5 nodes and sequential edges |
-| **Panel Coordinator** | Implied to use LLM | Deterministic: Pure Python weighted merge, no LLM call |
-| **Node Invocation** | Orchestration layer | Explicit: `/pipeline/run-full-graph` endpoint calls `graph.invoke(initial_state)` |
-| **Bias Flag Impact** | Affects decision | Bias flag is logged but NEVER affects recommendation; always routes to human review |
-| **Fallback Strategy** | Not mentioned | Every agent has regex/heuristic fallback if Gemini API fails |
-
-### Detailed Implementation Rationale
-
-1. **MCP Usage Separation**:
-   - Rather than embedding storage/side-effect logic inside evaluation agents, agents remain pure stateless functions that accept inputs and return structured Pydantic models.
-   - The LangGraph orchestration nodes (`screening_node`, `skill_node`, `culture_node`, `panel_node`, `bias_node`) invoke the agents first, and then explicitly call `ATSTools.save_*()` to persist records to the audit database.
-
-2. **LLM Strategy & Deterministic Fallbacks**:
-   - Every agent that queries Gemini (`ResumeScreenerAgent`, `SkillAssessorAgent`, `CultureFitAgent`) utilizes a graceful degradation pattern (`StrategyChain`).
-   - If the LLM call times out, returns malformed output, or exceeds quota (HTTP 429), the agent seamlessly drops back to an in-process heuristic/regex scoring engine, guaranteeing zero downtime.
-
-3. **No Direct Tool Calling in LLMs**:
-   - The LLM is strictly used for structured synthesis and text extraction conforming to JSON schemas.
-   - The LLM does not execute side effects or trigger arbitrary tools, mitigating prompt injection risks.
-
-4. **Deterministic Panel Coordinator**:
-   - `PanelCoordinatorAgent` computes the composite panel score using exact rubric weights:
-     `score = (resume * resume_wt) + (skill * skill_wt) + (culture * culture_wt)`.
-   - Synthesis logic for identifying strengths, gaps, and discrepancies uses deterministic threshold rules rather than unconstrained LLM hallucinations.
-
-5. **Non-Blocking Bias Flagging**:
-   - The `BiasCheckerAgent` evaluates demographic parity under the EEOC 4/5ths rule.
-   - When a disparity flag is triggered, it does **not** reject the candidate or modify scores; it appends an audit notification requiring human sign-off.
-
+* The subprocess sandbox is defense in depth, not a hardened security boundary; use `SANDBOX_BACKEND=docker` in production. Coding challenges are Python only.
+* HR accounts are a fixed demo list in code; there is no user management, password reset, SSO or login rate limiting.
+* Without an LLM, open-ended answers are scored with a keyword rubric and STAR-structure detection, which are coarse proxies for answer quality.
+* Cohort tags are supplied by HR or imported data; there is no voluntary self-identification flow. Bias statistics are only as good as that data.
+* Scanned (image-only) resumes are rejected rather than OCR'd.
+* Schema changes are applied by an additive migration (new nullable columns); there is no Alembic history.

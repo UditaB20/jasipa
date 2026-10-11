@@ -1,16 +1,11 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: jasipa_postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: jasipa_user
-      POSTGRES_PASSWORD: jasipa_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jasipa_password}
       POSTGRES_DB: jasipa_db
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,15 +15,18 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: jasipa_backend
-    restart: always
+    build: ./backend
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://jasipa_user:jasipa_password@postgres:5432/jasipa_db
-      SECRET_KEY: jasipa-super-secret-jwt-key-2026
-      LLM_PROVIDER: mock
+      DATABASE_URL: postgresql://jasipa_user:${POSTGRES_PASSWORD:-jasipa_password}@postgres:5432/jasipa_db
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      CORS_ORIGINS: '["http://localhost:5173"]'
+      UPLOAD_DIR: /data/uploads
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+    volumes:
+      - uploads:/data/uploads
     ports:
       - "8000:8000"
     depends_on:
@@ -38,9 +36,9 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: jasipa_frontend
-    restart: always
+      args:
+        VITE_API_URL: http://localhost:8000
+    restart: unless-stopped
     ports:
       - "5173:5173"
     depends_on:
@@ -48,3 +46,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads:

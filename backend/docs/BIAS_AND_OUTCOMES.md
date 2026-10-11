@@ -1,9 +1,37 @@
 # Bias checks and hiring outcomes
 
-`BiasCheckerAgent` runs three cohort-level descriptive checks: selection-rate disparate impact, recorded outcome success rates, and observed score floors for panel `PROCEED_TO_HUMAN_REVIEW` recommendations. Outcome success is defined as a manager-reported performance rating of at least 3.5/5. A ratio below the configured 4/5ths threshold is a warning signal. Observed proceed score floors are proxies and cannot establish that different decision thresholds were applied.
+Every panel run ends with a bias check that is stored with that panel decision (`bias_checks.decision_id`), written to the audit log, and shown to the reviewer next to the decision form. A human decision is refused unless the latest panel decision has its bias check, and the decision's audit entry repeats the bias status and reason. Bias checks never change scores, routing or a candidate's stage.
 
-All checks report sample size, status, reason, and supporting details. Cohort comparisons with fewer than 10 records are marked insufficient; dashboard rates are suppressed below n=10. Confidence labels are coarse volume indicators, not statistical confidence intervals. Outcome summaries are unadjusted for job, tenure, and other confounders, so they should guide investigation rather than conclusions about an individual or group. Every flag or insufficient-data result calls for human review; the checks never change an individual's status.
+## What is checked
 
-Hiring outcome recording is implemented by `OutcomeRecordingService` and requires an existing human APPROVE review, a past hire date, valid outcome fields, and manager email matching the authenticated HR account. This authenticates the submitting account; it does not verify the manager through an external identity provider. One outcome row is updated per candidate. Test/demo candidates are excluded from outcome analytics.
+| Check | Question | Data |
+| --- | --- | --- |
+| `decision_rationale_language` | Does the panel's rationale contain demographic or proxy language? | This panel decision |
+| `selection_rate_ai_recommendation` | Do cohorts reach "Proceed" at different rates? | Latest panel decision per candidate |
+| `selection_rate_human_decision` | Do cohorts get approved at different rates? | Latest final human decision per candidate |
+| `outcome_based_fairness` | Do approved hires from different cohorts receive different performance ratings? | Recorded hiring outcomes |
+| `threshold_consistency` | Do the lowest "Proceed" scores differ across cohorts? | Latest panel decision per candidate |
 
-Use `GET /api/admin/bias-checks/summary`, `/api/admin/bias-checks/by-cohort`, and `/api/admin/outcomes` for HR-only aggregate views. Use `POST /api/learning/outcomes` to record or update one candidate's outcome and `GET /api/learning/analytics` for descriptive learning metrics. No outcomes automatically alter rubrics, model weights, or hiring decisions.
+## Small cohorts
+
+The original implementation applied the four-fifths rule to cohorts with as few as two candidates, so a single outcome could flip the result. Selection-rate comparisons (`app/services/fairness_stats.py`) now report, for every cohort:
+
+* selection rate with a Wilson 95% interval;
+* impact ratio against the highest-rate cohort that has at least `BIAS_MIN_GROUP_SIZE` (default 5) candidates;
+* a two-sided Fisher's exact test of the cohort against all other candidates with a recorded cohort (exact for small counts; verified against SciPy reference values in the tests);
+* a fragility flag when changing one candidate's outcome would flip the four-fifths result.
+
+Each comparison is classified as:
+
+| Status | Meaning |
+| --- | --- |
+| `STATISTICALLY_SUPPORTED_DISPARITY` | Impact ratio below 0.80 **and** Fisher p < 0.05. Escalate. It still does not establish cause or intent. |
+| `POTENTIAL_DISPARITY_INDICATOR` | Ratio below 0.80 without significance, or a significant shortfall within the 0.80 screen. A prompt to look closer, not a finding. |
+| `INSUFFICIENT_DATA` | Fewer than the minimum candidates, fewer than two comparable cohorts, or no selections in the reference cohort. Explicitly *not* evidence of fairness. |
+| `NO_INDICATOR_DETECTED` | Nothing flagged. For cohorts under 30 the result notes that a real disparity could go undetected. |
+
+Missing data: candidates without a recorded cohort (including the legacy default "General Cohort") are excluded from comparisons and counted; the summary warns when more than 20% are missing. Cohort tags are never passed to the evaluation agents.
+
+## Hiring outcomes
+
+Outcomes can be recorded only for candidates with a final human APPROVE decision, by an authenticated HR user whose email is recorded as the manager email. Analytics are descriptive, flag samples under 15, exclude records marked test/demo/mock/e2e, and never change rubrics, weights or decisions automatically.
