@@ -1,662 +1,419 @@
-import React, { useState, useEffect } from "react";
-import {
-  FileText, CheckCircle2, AlertTriangle, ShieldCheck, Scale, ArrowLeft,
-  Play, Bot, User, Award, ListChecks, HelpCircle, RefreshCw
-} from "lucide-react";
-import { getCandidate, getJob, runScreenResume, runPanelSynthesis, runFullGraph } from "../services/api";
-import StageBadge from "../components/StageBadge";
-import ScoreRadar from "../components/ScoreRadar";
-import BiasAlertBanner from "../components/BiasAlertBanner";
+import { useMemo, useState } from "react";
+import { ArrowLeft, CheckCircle2, Download, FileText, Play, RefreshCw, Scale, UserCheck, XCircle, HelpCircle, Code2 } from "lucide-react";
+import { downloadResume, getCandidate, getDecisionStatus, getJobs, runFullGraph, runScreenResume, submitDecision } from "../services/api";
 import AuditTimeline from "../components/AuditTimeline";
+import {
+  Alert, Badge, BiasBadge, BIAS, Card, DECISIONS, EmptyState, ErrorState, Field, PageHeader, PageLoading, RecommendationBadge,
+  ScoreBar, Spinner, StageBadge, Tabs, fmtDateTime, fmtScore, latest, useAsync, useToast,
+} from "../components/ui";
 
-export default function CandidateDetail({ candidateId, setActivePage, setSelectedCandidateId }) {
-  const [candidate, setCandidate] = useState(null);
-  const [targetJob, setTargetJob] = useState(null);
-  const [activeTab, setActiveTab] = useState("overview");
-  const [runningAction, setRunningAction] = useState(false);
-  const [loading, setLoading] = useState(true);
+const CHECK_LABELS = {
+  decision_rationale_language: "Language in the panel rationale",
+  selection_rate_ai_recommendation: "Selection rates at the AI recommendation stage",
+  selection_rate_human_decision: "Selection rates in final human decisions",
+  outcome_based_fairness: "Post-hire outcomes by cohort",
+  threshold_consistency: "Score thresholds across cohorts",
+};
 
-  useEffect(() => {
-    if (candidateId) {
-      loadDetails();
-    }
-  }, [candidateId]);
+export default function CandidateDetail({ candidateId, onDecision }) {
+  const toast = useToast();
+  const [tab, setTab] = useState("overview");
+  const [running, setRunning] = useState(null);
+  const { data, loading, error, reload } = useAsync(
+    () => Promise.all([getCandidate(candidateId), getJobs(), getDecisionStatus(candidateId)]), [candidateId]);
 
-  async function loadDetails() {
+  const view = useMemo(() => {
+    if (!data) return null;
+    const [c, jobs, decision] = data;
+    const assessments = c.assessments || [];
+    return {
+      c, decision,
+      job: jobs.find((j) => j.jd_id === c.target_jd_id),
+      screening: latest(c.screening_results),
+      tech: latest(assessments.filter((a) => a.test_type === "TECHNICAL")),
+      beh: latest(assessments.filter((a) => a.test_type === "BEHAVIORAL")),
+      panel: latest(c.panel_decisions),
+      bias: latest(c.bias_checks),
+      reviews: c.human_reviews || [],
+      audit: [...(c.audit_logs || [])].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || new Date(a.timestamp) - new Date(b.timestamp)),
+    };
+  }, [data]);
+
+  if (loading && !data) return <PageLoading />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const { c, job, screening, tech, beh, panel, bias, decision } = view;
+  const decided = c.current_stage === "DECIDED";
+
+  const run = async (kind) => {
+    setRunning(kind);
     try {
-      const data = await getCandidate(candidateId);
-      setCandidate(data);
-      if (data.target_jd_id) {
-        const j = await getJob(data.target_jd_id);
-        setTargetJob(j);
+      if (kind === "pipeline") {
+        const result = await runFullGraph(c.candidate_id);
+        toast(`Evaluation complete (round ${result.round_number}). Ready for your decision.`);
+        setTab("overview");
+      } else {
+        await runScreenResume(c.candidate_id);
+        toast("Resume re-screened against the current rubric.");
       }
+      await reload();
+      onDecision?.();
     } catch (err) {
-      console.error("Error loading candidate:", err);
+      toast(err.message, "error");
     } finally {
-      setLoading(false);
+      setRunning(null);
     }
-  }
+  };
 
-  async function handleRunScreening() {
-    setRunningAction(true);
+  const saveResume = async () => {
     try {
-      await runScreenResume(candidate.candidate_id, candidate.target_jd_id);
-      await loadDetails();
-      setActiveTab("screening");
+      const blob = await downloadResume(c.candidate_id);
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement("a"), { href: url, download: c.resume_original_filename || "resume" });
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
-      alert("Screening run failed: " + err.message);
-    } finally {
-      setRunningAction(false);
+      toast(err.message, "error");
     }
-  }
+  };
 
-  async function handleRunPanel() {
-    setRunningAction(true);
-    try {
-      await runPanelSynthesis(candidate.candidate_id, candidate.target_jd_id);
-      await loadDetails();
-      setActiveTab("panel");
-    } catch (err) {
-      alert("Panel run failed: " + err.message);
-    } finally {
-      setRunningAction(false);
-    }
-  }
+  const awaiting = decision.can_decide;
+  return (
+    <div className="page">
+      <PageHeader
+        back={<a className="breadcrumb" href="#/candidates"><ArrowLeft size={13} />Candidates</a>}
+        title={<span className="row wrap" style={{ gap: 10 }}>{c.name}<StageBadge stage={c.current_stage} /></span>}
+        subtitle={`${job ? job.title : "No application"} · ${c.email}${c.experience_years ? ` · ${c.experience_years} yrs experience` : ""}`}
+        actions={!decided && (
+          <>
+            <button className="btn btn-secondary" disabled={!!running || !c.target_jd_id} onClick={() => run("screen")}>
+              {running === "screen" ? <Spinner /> : <RefreshCw size={14} />}Re-screen resume
+            </button>
+            <button className="btn btn-primary" disabled={!!running || !c.target_jd_id} onClick={() => run("pipeline")}
+              title="Runs resume, skill and behavioral agents, the panel and the bias check">
+              {running === "pipeline" ? <Spinner /> : <Play size={14} />}{panel ? "Re-run evaluation" : "Run evaluation"}
+            </button>
+          </>
+        )}
+      />
 
-  async function handleRunFullGraph() {
-    setRunningAction(true);
-    try {
-      await runFullGraph(candidate.candidate_id, candidate.target_jd_id);
-      await loadDetails();
-      setActiveTab("panel");
-    } catch (err) {
-      alert("LangGraph full pipeline run failed: " + err.message);
-    } finally {
-      setRunningAction(false);
-    }
-  }
+      {awaiting && (
+        <div className="mb-16">
+          <Alert tone="warning" title="Waiting for a human decision"
+            action={tab !== "decision" && <button className="btn btn-secondary btn-sm" onClick={() => setTab("decision")}>Review and decide</button>}>
+            {decision.requires_two_reviewers ? "This decision needs two different reviewers who agree. " : ""}
+            The panel recommendation and its bias check are ready.
+          </Alert>
+        </div>
+      )}
+      {c.current_stage === "INFO_REQUESTED" && <div className="mb-16"><Alert tone="info" title="More information requested">Re-run the evaluation once the new evidence (for example a follow-up assessment) is in.</Alert></div>}
+      {c.current_stage === "MANUAL_REVIEW_REQUIRED" && <div className="mb-16"><Alert tone="danger" title="Resume needs manual review">Text extraction confidence was low. Check the resume before screening.</Alert></div>}
 
-  if (loading || !candidate) {
-    return (
-      <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>
-        Loading candidate dossier...
+      <Tabs active={tab} onChange={setTab} tabs={[
+        { id: "overview", label: "Overview" },
+        { id: "resume", label: "Resume" },
+        { id: "assessments", label: "Assessments" },
+        { id: "panel", label: "Panel & bias check" },
+        { id: "decision", label: "Decision", badge: awaiting ? "Action" : null, badgeTone: "warning" },
+        { id: "history", label: "History" },
+      ]} />
+
+      {tab === "overview" && <Overview {...{ c, screening, tech, beh, panel, bias, decision, setTab }} />}
+      {tab === "resume" && <ResumeTab c={c} screening={screening} onDownload={saveResume} />}
+      {tab === "assessments" && <AssessmentsTab tech={tech} beh={beh} />}
+      {tab === "panel" && <PanelTab panel={panel} bias={bias} />}
+      {tab === "decision" && <DecisionTab c={c} panel={panel} bias={bias} status={decision} reviews={view.reviews}
+        onDone={async () => { await reload(); onDecision?.(); }} />}
+      {tab === "history" && <Card title="History" subtitle="Every agent output and human action recorded in the tamper-evident audit log."><AuditTimeline entries={view.audit} /></Card>}
+    </div>
+  );
+}
+
+function Overview({ c, screening, tech, beh, panel, bias, decision, setTab }) {
+  const finalReview = decision.signoffs.filter((s) => s.is_final).at(-1);
+  return (
+    <div className="split">
+      <div className="stack">
+        <Card title="Evaluation summary" subtitle={panel ? `Round ${panel.round_number || 1} · rubric v${panel.rubric_version}` : "Not evaluated yet"}>
+          {!panel && !screening ? (
+            <EmptyState icon={Play} title="No evaluation yet">
+              {c.target_jd_id ? "Run the evaluation to screen the resume and merge any submitted assessments." : "This candidate has not applied to a job."}
+            </EmptyState>
+          ) : (
+            <div className="stack">
+              {panel && (
+                <div className="row-between wrap">
+                  <div><div className="xs dim">Panel score</div><div className="score-big">{fmtScore(panel.merged_score)}</div></div>
+                  <div className="row"><RecommendationBadge value={panel.recommendation} />{bias && <BiasBadge value={bias.flag_status} />}</div>
+                </div>
+              )}
+              <div className="stack-sm">
+                <ScoreBar label="Resume" value={panel?.resume_score ?? screening?.score} />
+                <ScoreBar label="Technical" value={panel ? panel.skill_score : tech?.score} />
+                <ScoreBar label="Behavioral" value={panel ? panel.culture_score : beh?.score} />
+              </div>
+              {panel?.natural_language_summary && <p className="muted small">{panel.natural_language_summary}</p>}
+            </div>
+          )}
+        </Card>
+        {panel && (
+          <div className="grid grid-2">
+            <Card title="Strengths"><ul className="list">{panel.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul></Card>
+            <Card title="Gaps"><ul className="list">{panel.gaps.map((s, i) => <li key={i}>{s}</li>)}</ul></Card>
+          </div>
+        )}
+        {panel?.disagreements?.length > 0 && (
+          <Card title="Points for the reviewer"><ul className="list">{panel.disagreements.map((s, i) => <li key={i}>{s}</li>)}</ul></Card>
+        )}
       </div>
-    );
-  }
+      <div className="stack">
+        <Card title="Decision">
+          {finalReview ? (
+            <div className="stack-sm">
+              <Badge tone={DECISIONS[finalReview.decision]?.tone}>{DECISIONS[finalReview.decision]?.label}</Badge>
+              <p className="small">{finalReview.notes}</p>
+              <p className="xs dim">{finalReview.reviewer_name} · {fmtDateTime(finalReview.timestamp)}</p>
+            </div>
+          ) : (
+            <div className="stack-sm">
+              <p className="muted small">{decision.blocking_reason || "Ready for a decision."}</p>
+              {decision.can_decide && <button className="btn btn-primary btn-sm" style={{ alignSelf: "flex-start" }} onClick={() => setTab("decision")}><UserCheck size={14} />Review and decide</button>}
+            </div>
+          )}
+        </Card>
+        <Card title="Profile">
+          <dl className="kv">
+            <dt>Education</dt><dd>{c.education || "—"}</dd>
+            <dt>Experience</dt><dd className="num">{c.experience_years ? `${c.experience_years} years` : "Not stated"}</dd>
+            <dt>Skills found</dt><dd><div className="chips">{(c.skills_extracted || []).map((s) => <span key={s} className="chip">{s}</span>)}</div></dd>
+            <dt>Monitoring cohort</dt><dd className="muted">{c.cohort_tag || "Not recorded"}</dd>
+          </dl>
+        </Card>
+      </div>
+    </div>
+  );
+}
 
-  const latestScreening = candidate.screening_results?.[candidate.screening_results.length - 1];
-  const techAssessment = candidate.assessments?.find(a => a.test_type === "TECHNICAL");
-  const behAssessment = candidate.assessments?.find(a => a.test_type === "BEHAVIORAL");
-  const latestPanel = candidate.panel_decisions?.[candidate.panel_decisions.length - 1];
-  const latestBias = candidate.bias_checks?.[candidate.bias_checks.length - 1];
-  const latestReview = candidate.human_reviews?.[candidate.human_reviews.length - 1];
+function ResumeTab({ c, screening, onDownload }) {
+  const p = c.resume_profile || {};
+  if (!c.resume_text) return <Card><EmptyState icon={FileText} title="No resume on file">Ask the candidate to upload one in the portal, or add it from the candidates list.</EmptyState></Card>;
+  return (
+    <div className="split">
+      <Card title="Resume text" subtitle={c.resume_original_filename ? `${c.resume_original_filename}${p.extraction_confidence != null ? ` · extraction confidence ${Math.round(p.extraction_confidence * 100)}%` : ""}` : "Entered as text"}
+        actions={c.resume_original_filename && <button className="btn btn-secondary btn-sm" onClick={onDownload}><Download size={13} />Original file</button>}>
+        <div className="resume-text">{c.resume_text}</div>
+      </Card>
+      <div className="stack">
+        {screening && (
+          <Card title="Screening against the job" subtitle={`Score ${fmtScore(screening.score)} · rubric v${screening.rubric_version}`}>
+            <div className="stack-sm">
+              <div className="xs dim">Required skills found</div>
+              <div className="chips">{screening.matched_requirements.map((s) => <span key={s} className="chip chip-success">{s}</span>)}{!screening.matched_requirements.length && <span className="dim small">None</span>}</div>
+              {screening.missing_requirements.length > 0 && <><div className="xs dim mt-8">Not evidenced</div>
+                <div className="chips">{screening.missing_requirements.map((s) => <span key={s} className="chip chip-danger">{s}</span>)}</div></>}
+              <ul className="list mt-8">{screening.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            </div>
+          </Card>
+        )}
+        <Card title="Extracted details">
+          <dl className="kv">
+            <dt>Experience</dt><dd>{p.experience_years ? `${p.experience_years} years (${p.experience_source === "stated" ? "stated" : "from dates"})` : "Not found"}</dd>
+            <dt>Education</dt><dd>{(p.education || []).length ? <ul className="list">{p.education.map((e, i) => <li key={i}>{e}</li>)}</ul> : "—"}</dd>
+            <dt>Roles</dt><dd>{(p.experience_entries || []).length ? <ul className="list">{p.experience_entries.map((e, i) => <li key={i}>{e.summary}</li>)}</ul> : "—"}</dd>
+            <dt>Projects</dt><dd>{(p.projects || []).length ? <ul className="list">{p.projects.map((e, i) => <li key={i}>{e}</li>)}</ul> : "—"}</dd>
+          </dl>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function AssessmentsTab({ tech, beh }) {
+  if (!tech && !beh) return <Card><EmptyState icon={FileText} title="No assessments submitted">The candidate completes the technical and behavioral assessments in the portal.</EmptyState></Card>;
+  return (
+    <div className="stack">
+      {tech && <AssessmentCard title="Technical assessment" a={tech} />}
+      {beh && <AssessmentCard title="Behavioral assessment (STAR)" a={beh} />}
+    </div>
+  );
+}
+
+function AssessmentCard({ title, a }) {
+  const answers = Object.fromEntries((a.answers || []).map((x) => [x.question_id, x.answer_text]));
+  const exec = a.execution_results || {};
+  return (
+    <Card title={title} subtitle={`Submitted ${fmtDateTime(a.completed_date)} · scored by ${a.strategy_used || "agent"}`}
+      actions={<div className="row"><span className="num" style={{ fontWeight: 600, fontSize: 18 }}>{fmtScore(a.score)}</span>
+        {a.status !== "COMPLETED" && <Badge tone="warning">{a.status.replace(/_/g, " ").toLowerCase()}</Badge>}</div>}>
+      <div className="stack">
+        {Object.keys(a.skill_breakdown || {}).length > 0 && (
+          <div className="stack-sm">{Object.entries(a.skill_breakdown).map(([k, v]) => <ScoreBar key={k} label={k.replace(/_/g, " ")} value={v} />)}</div>
+        )}
+        {(a.questions || []).map((q, i) => (
+          <div key={q.question_id} className="inset">
+            <div className="row-between wrap">
+              <div className="row small"><Badge>{q.type === "mcq" ? "Multiple choice" : q.type === "coding" ? "Coding" : q.type === "behavioral" ? "STAR" : "Scenario"}</Badge><span className="dim">{q.competency_or_skill}</span></div>
+              <span className="xs dim">Q{i + 1}</span>
+            </div>
+            <p className="small mt-8">{q.prompt}</p>
+            {q.type === "mcq" && <p className="small mt-8">Answer: <strong>{answers[q.question_id] || "—"}</strong> · key {q.correct_option}</p>}
+            {q.type === "coding" ? (
+              <>
+                <pre className="block mt-8">{answers[q.question_id] || "No code submitted"}</pre>
+                {exec[q.question_id] && <ExecutionSummary result={exec[q.question_id]} />}
+              </>
+            ) : q.type !== "mcq" && <p className="small muted mt-8" style={{ whiteSpace: "pre-wrap" }}>{answers[q.question_id] || <em>Not answered</em>}</p>}
+          </div>
+        ))}
+        {a.evidence?.length > 0 && <div><div className="section-title">Scoring evidence</div><ul className="list">{a.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul></div>}
+      </div>
+    </Card>
+  );
+}
+
+function ExecutionSummary({ result }) {
+  const ok = result.status === "OK";
+  return (
+    <div className="mt-8 stack-sm">
+      <div className="row small"><Code2 size={14} />
+        {ok ? <span><strong className="num">{result.passed}/{result.total}</strong> sandboxed tests passed ({result.tests.filter((t) => t.hidden).length} hidden)</span>
+          : <span style={{ color: "#ef8a84" }}>{result.status.replace(/_/g, " ").toLowerCase()}: {result.compile_error || result.error}</span>}
+      </div>
+      {ok && (
+        <div className="chips">
+          {result.tests.map((t) => (
+            <span key={t.index} className={`chip ${t.passed ? "chip-success" : "chip-danger"}`} title={t.error || "passed"}>
+              {t.passed ? <CheckCircle2 size={12} /> : <XCircle size={12} />}{t.hidden ? "hidden" : "example"} {t.index + 1}{t.error && t.error !== "Wrong answer" ? ` · ${t.error}` : ""}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PanelTab({ panel, bias }) {
+  if (!panel) return <Card><EmptyState icon={Scale} title="No panel evaluation yet">Run the evaluation to merge the three agents' scores and record a bias check.</EmptyState></Card>;
+  const checks = bias?.cohort_breakdown?.checks || [];
+  return (
+    <div className="split">
+      <Card title="Panel recommendation" subtitle={`Round ${panel.round_number || 1} · ${fmtDateTime(panel.created_at)}`}>
+        <div className="stack">
+          <div className="row"><RecommendationBadge value={panel.recommendation} />{panel.requires_four_eyes_review && <Badge tone="warning">Two reviewers required</Badge>}</div>
+          <div className="stack-sm">
+            <ScoreBar label="Resume" value={panel.resume_score} />
+            <ScoreBar label="Technical" value={panel.skill_score} />
+            <ScoreBar label="Behavioral" value={panel.culture_score} />
+            <ScoreBar label="Merged" value={panel.merged_score} />
+          </div>
+          <p className="xs dim">The merge uses the rubric weights in plain code. The system only routes candidates to a reviewer; it cannot approve or reject.</p>
+          <div><div className="section-title">Evidence cited</div><ul className="list">{panel.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul></div>
+        </div>
+      </Card>
+      <Card title="Bias check for this decision" subtitle={bias ? fmtDateTime(bias.created_at) : "Not recorded"} actions={bias && <BiasBadge value={bias.flag_status} />}>
+        {!bias ? <p className="muted small">No bias check is recorded for this panel decision.</p> : (
+          <div className="stack">
+            <p className="small">{bias.reason}</p>
+            {checks.map((check) => (
+              <div key={check.check_type} className="inset">
+                <div className="row-between"><span className="small" style={{ fontWeight: 550 }}>{CHECK_LABELS[check.check_type] || check.check_type}</span><BiasBadge value={check.flag_status} /></div>
+                <p className="xs muted mt-4">{check.reason}</p>
+              </div>
+            ))}
+            {(bias.cohort_breakdown?.recommendations || []).length > 0 && <ul className="list">{bias.cohort_breakdown.recommendations.map((r, i) => <li key={i}>{r}</li>)}</ul>}
+            <p className="xs dim">Bias checks never change scores or routing. An indicator is a prompt to look closer; "insufficient data" is not evidence of fairness.</p>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function DecisionTab({ c, panel, bias, status, reviews, onDone }) {
+  const toast = useToast();
+  const [notes, setNotes] = useState("");
+  const [choice, setChoice] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const pending = status.signoffs.filter((s) => !s.is_final);
+
+  const submit = async () => {
+    if (!choice) return setError("Choose a decision.");
+    if (notes.trim().length < 10) return setError("Explain the decision in at least 10 characters; the note is stored in the audit log.");
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await submitDecision({ candidate_id: c.candidate_id, decision: choice, notes: notes.trim(), decision_id: status.decision_id });
+      toast(res.outcome === "FINAL" ? "Decision recorded." : res.outcome === "AWAITING_SECOND_REVIEWER" ? "Sign-off recorded. A second reviewer must confirm." : "Sign-off recorded. Reviewers disagree; another reviewer must agree with one decision.");
+      setNotes("");
+      setChoice(null);
+      await onDone();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
-      {/* Back Button & Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "20px" }}>
-        <button
-          onClick={() => setActivePage("candidates")}
-          className="btn btn-secondary"
-          style={{ padding: "8px 12px" }}
-        >
-          <ArrowLeft size={16} />
-          <span>Back to Candidates</span>
-        </button>
-
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <h2 style={{ fontSize: "1.4rem", fontWeight: "800", color: "#f8fafc" }}>
-              {candidate.name}
-            </h2>
-            <StageBadge stage={candidate.current_stage} />
-            <span style={{ fontSize: "0.75rem", color: "#94a3b8", background: "rgba(255, 255, 255, 0.05)", padding: "2px 8px", borderRadius: "6px" }}>
-              {candidate.cohort_tag || "General Cohort"}
-            </span>
-          </div>
-          <p style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-            {candidate.email} • Target: <span style={{ color: "#38bdf8", fontWeight: "600" }}>{targetJob?.title || candidate.target_jd_id || "Not assigned"}</span> • {candidate.experience_years} yrs exp
-          </p>
-        </div>
-      </div>
-
-      {/* Action Pipeline Control Bar */}
-      <div
-        className="glass-card"
-        style={{
-          padding: "14px 20px",
-          marginBottom: "24px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%)",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span style={{ fontSize: "0.8rem", color: "#94a3b8", fontWeight: "600" }}>Agent Actions:</span>
-          
-          <button
-            onClick={handleRunScreening}
-            disabled={runningAction}
-            className="btn btn-secondary"
-            style={{ fontSize: "0.78rem", padding: "6px 14px" }}
-          >
-            <Bot size={14} />
-            <span>Screen Resume</span>
-          </button>
-
-          <button
-            onClick={() => setActivePage("assessments")}
-            className="btn btn-secondary"
-            style={{ fontSize: "0.78rem", padding: "6px 14px" }}
-          >
-            <ListChecks size={14} />
-            <span>Interactive Assessment Room</span>
-          </button>
-
-          <button
-            onClick={handleRunPanel}
-            disabled={runningAction}
-            className="btn btn-secondary"
-            style={{ fontSize: "0.78rem", padding: "6px 14px" }}
-          >
-            <Scale size={14} />
-            <span>Run Panel Synthesis & Bias Check</span>
-          </button>
-        </div>
-
-        <button
-          onClick={handleRunFullGraph}
-          disabled={runningAction}
-          className="btn btn-primary"
-          style={{ fontSize: "0.8rem", padding: "8px 16px" }}
-        >
-          <Play size={15} />
-          <span>{runningAction ? "Executing LangGraph..." : "Run End-to-End Orchestrator"}</span>
-        </button>
-      </div>
-
-      {/* Bias Alert Banner if exists */}
-      <BiasAlertBanner biasCheck={latestBias} />
-
-      {/* Tabs Bar */}
-      <div
-        style={{
-          display: "flex",
-          gap: "8px",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-          marginBottom: "20px",
-          paddingBottom: "8px",
-          overflowX: "auto",
-        }}
-      >
-        {[
-          { id: "overview", label: "Executive Synthesis" },
-          { id: "screening", label: "1. Resume Screener" },
-          { id: "technical", label: "2. Skill Assessor" },
-          { id: "behavioral", label: "3. Culture-Fit Agent" },
-          { id: "panel", label: "4. Panel Coordinator & Bias" },
-          { id: "review", label: "5. Human Review & Decision" },
-          { id: "audit", label: "6. Candidate Memory & Audit" },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: "8px 16px",
-              borderRadius: "8px",
-              fontSize: "0.82rem",
-              fontWeight: activeTab === tab.id ? "700" : "500",
-              color: activeTab === tab.id ? "#fff" : "#94a3b8",
-              background: activeTab === tab.id ? "rgba(99, 102, 241, 0.25)" : "transparent",
-              border: activeTab === tab.id ? "1px solid rgba(99, 102, 241, 0.4)" : "1px solid transparent",
-              cursor: "pointer",
-              transition: "all 0.2s",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content 1: Executive Overview */}
-      {activeTab === "overview" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            {/* Score Radar */}
-            <ScoreRadar
-              resumeScore={latestScreening?.score || 0}
-              skillScore={techAssessment?.score || 0}
-              cultureScore={behAssessment?.score || 0}
-              mergedScore={latestPanel?.merged_score || 0}
-            />
-
-            {/* Panel Recommendation Highlights */}
-            {latestPanel && (
-              <div className="glass-card" style={{ padding: "20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc" }}>
-                    Panel Recommendation
-                  </h3>
-                  <span
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: "9999px",
-                      background: "rgba(99, 102, 241, 0.2)",
-                      color: "#818cf8",
-                      fontWeight: "700",
-                      fontSize: "0.75rem",
-                    }}
-                  >
-                    {latestPanel.recommendation}
-                  </span>
-                </div>
-
-                <div style={{ marginBottom: "12px" }}>
-                  <h4 style={{ fontSize: "0.8rem", color: "#34d399", fontWeight: "700", marginBottom: "4px" }}>
-                    Key Strengths:
-                  </h4>
-                  <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1" }}>
-                    {latestPanel.strengths?.map((s, idx) => (
-                      <li key={idx}>{s}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                {latestPanel.gaps?.length > 0 && (
-                  <div style={{ marginBottom: "12px" }}>
-                    <h4 style={{ fontSize: "0.8rem", color: "#fb7185", fontWeight: "700", marginBottom: "4px" }}>
-                      Identified Gaps:
-                    </h4>
-                    <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1" }}>
-                      {latestPanel.gaps?.map((g, idx) => (
-                        <li key={idx}>{g}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {latestPanel.requires_four_eyes_review && (
-                  <div
-                    style={{
-                      background: "rgba(245, 158, 11, 0.15)",
-                      border: "1px solid rgba(245, 158, 11, 0.4)",
-                      borderRadius: "8px",
-                      padding: "10px 14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "10px",
-                      marginBottom: "6px"
-                    }}
-                  >
-                    <span style={{ fontSize: "1.1rem" }}>👥</span>
-                    <div>
-                      <div style={{ fontSize: "0.82rem", fontWeight: "700", color: "#fbbf24" }}>
-                        Four-Eyes Governance Escalation Active
-                      </div>
-                      <div style={{ fontSize: "0.74rem", color: "#fde68a" }}>
-                        Inter-agent score divergence across screening domains is ≥ 30 points. Two independent human talent reviewers are required to sign off.
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {latestPanel.disagreements?.length > 0 && (
-                  <div>
-                    <h4 style={{ fontSize: "0.8rem", color: "#fbbf24", fontWeight: "700", marginBottom: "4px" }}>
-                      Agent Perspective Divergence:
-                    </h4>
-                    <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1" }}>
-                      {latestPanel.disagreements?.map((d, idx) => (
-                        <li key={idx}>{d}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+    <div className="split">
+      <Card title="Record decision" subtitle="Approve or reject closes the application. Requesting information keeps it open.">
+        {!status.can_decide ? (
+          <Alert tone="info">{status.blocking_reason}</Alert>
+        ) : (
+          <div className="stack">
+            {status.requires_two_reviewers && (
+              <Alert tone="warning" title="Two reviewers required">
+                The panel escalated this candidate. Approve or reject takes effect when two different HR reviewers agree.
+                {pending.length > 0 && ` Current sign-offs: ${pending.map((s) => `${s.reviewer_name} (${DECISIONS[s.decision]?.label})`).join(", ")}.`}
+              </Alert>
             )}
-          </div>
-
-          {/* Right Column: Resume Preview & Quick Info */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            <div className="glass-card" style={{ padding: "20px" }}>
-              <h3 style={{ fontSize: "0.95rem", fontWeight: "700", color: "#f8fafc", marginBottom: "10px" }}>
-                Resume Extracted Content
-              </h3>
-              <div
-                style={{
-                  background: "rgba(15, 23, 42, 0.8)",
-                  padding: "14px",
-                  borderRadius: "8px",
-                  fontSize: "0.78rem",
-                  color: "#cbd5e1",
-                  maxHeight: "300px",
-                  overflowY: "auto",
-                  lineHeight: "1.6",
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {candidate.resume_text || "No resume text extracted."}
-              </div>
-            </div>
-
-            {latestReview && (
-              <div
-                className="glass-card"
-                style={{
-                  padding: "20px",
-                  background: "linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(15, 23, 42, 0.8) 100%)",
-                  border: "1px solid rgba(16, 185, 129, 0.3)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <h4 style={{ fontSize: "0.9rem", fontWeight: "700", color: "#34d399" }}>
-                    Human Decision: {latestReview.decision}
-                  </h4>
-                  <span style={{ fontSize: "0.7rem", color: "#94a3b8" }}>
-                    {new Date(latestReview.timestamp).toLocaleDateString()}
-                  </span>
-                </div>
-                <p style={{ fontSize: "0.8rem", color: "#f8fafc", marginTop: "8px" }}>
-                  "{latestReview.notes}"
-                </p>
-                <p style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "6px" }}>
-                  Signed by: {latestReview.reviewer_name}
-                </p>
-              </div>
+            {bias && (bias.flag_status === "POTENTIAL_DISPARITY_INDICATOR" || bias.flag_status === "STATISTICALLY_SUPPORTED_DISPARITY") && (
+              <Alert tone={bias.flag_status === "STATISTICALLY_SUPPORTED_DISPARITY" ? "danger" : "warning"} title={`Bias check: ${BIAS[bias.flag_status].label.toLowerCase()}`}>
+                {bias.reason}
+              </Alert>
             )}
+            <div className="grid grid-3" role="radiogroup" aria-label="Decision">
+              {[["APPROVE", CheckCircle2, "Approve"], ["REJECT", XCircle, "Do not proceed"], ["REQUEST_MORE_INFORMATION", HelpCircle, "Request information"]].map(([value, Icon, label]) => (
+                <label key={value} className={`option ${choice === value ? "selected" : ""}`}>
+                  <input type="radio" name="decision" value={value} checked={choice === value} onChange={() => setChoice(value)} />
+                  <span className="row small" style={{ fontWeight: 550 }}><Icon size={15} />{label}</span>
+                </label>
+              ))}
+            </div>
+            <Field label="Reason for the decision" hint="Refer to job-related evidence. Stored with the panel decision and bias check.">
+              <textarea className="textarea" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={4000} />
+            </Field>
+            {error && <div className="field-error">{error}</div>}
+            <div className="row" style={{ justifyContent: "flex-end" }}>
+              <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy && <Spinner />}Record decision</button>
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Tab 2: Resume Screening Agent Details */}
-      {activeTab === "screening" && (
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-            Resume-Screener Agent Evaluation
-          </h3>
-
-          {!latestScreening ? (
-            <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
-              Resume screening has not been executed yet. Click "Screen Resume" above.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div style={{ padding: "14px 20px", borderRadius: "10px", background: "rgba(6, 182, 212, 0.1)", border: "1px solid rgba(6, 182, 212, 0.3)" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#06b6d4", fontWeight: "600" }}>Resume Fit Score</div>
-                  <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#f8fafc" }}>
-                    {latestScreening.score}/100
-                  </div>
+        )}
+      </Card>
+      <div className="stack">
+        <Card title="What this decision is based on">
+          {panel ? (
+            <dl className="kv">
+              <dt>Panel score</dt><dd className="num">{fmtScore(panel.merged_score)} (round {panel.round_number || 1})</dd>
+              <dt>Recommendation</dt><dd><RecommendationBadge value={panel.recommendation} /></dd>
+              <dt>Bias check</dt><dd><BiasBadge value={bias?.flag_status} /></dd>
+            </dl>
+          ) : <p className="muted small">No panel evaluation yet.</p>}
+        </Card>
+        <Card title="Sign-offs">
+          {reviews.length === 0 ? <p className="muted small">No decisions recorded.</p> : (
+            <div className="stack-sm">
+              {reviews.slice().reverse().map((r) => (
+                <div key={r.review_id} className="inset">
+                  <div className="row-between"><Badge tone={DECISIONS[r.decision]?.tone}>{DECISIONS[r.decision]?.label}</Badge>{r.is_final === false && <span className="xs dim">first sign-off</span>}</div>
+                  <p className="small mt-8">{r.notes}</p>
+                  <p className="xs dim mt-4">{r.reviewer_name} · {fmtDateTime(r.timestamp)}</p>
                 </div>
-
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Status: <span style={{ color: "#34d399", fontWeight: "600" }}>{latestScreening.status}</span> • Rubric v{latestScreening.rubric_version}
-                  </div>
-                  <div style={{ fontSize: "0.8rem", color: "#cbd5e1", marginTop: "4px" }}>
-                    Experience Requirement Match: <span style={{ color: latestScreening.experience_match ? "#34d399" : "#fbbf24", fontWeight: "600" }}>{latestScreening.experience_match ? "Satisfied" : "Below Baseline"}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#34d399", fontWeight: "700", marginBottom: "6px" }}>
-                  Matched JD Requirements:
-                </h4>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                  {latestScreening.matched_requirements?.map((m) => (
-                    <span key={m} style={{ background: "rgba(16, 185, 129, 0.15)", color: "#34d399", padding: "3px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: "600" }}>
-                      ✓ {m}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {latestScreening.missing_requirements?.length > 0 && (
-                <div>
-                  <h4 style={{ fontSize: "0.85rem", color: "#fb7185", fontWeight: "700", marginBottom: "6px" }}>
-                    Missing JD Requirements:
-                  </h4>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {latestScreening.missing_requirements.map((m) => (
-                      <span key={m} style={{ background: "rgba(244, 63, 94, 0.15)", color: "#fb7185", padding: "3px 10px", borderRadius: "6px", fontSize: "0.75rem", fontWeight: "600" }}>
-                        ✗ {m}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#38bdf8", fontWeight: "700", marginBottom: "6px" }}>
-                  Extracted Evidence Citations:
-                </h4>
-                <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1", display: "flex", flexDirection: "column", gap: "4px" }}>
-                  {latestScreening.evidence?.map((ev, idx) => (
-                    <li key={idx}>{ev}</li>
-                  ))}
-                </ul>
-              </div>
+              ))}
             </div>
           )}
-        </div>
-      )}
-
-      {/* Tab 3: Technical Skill Assessor Details */}
-      {activeTab === "technical" && (
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-            Skill-Assessor Agent (Demonstrated Technical Assessment)
-          </h3>
-
-          {!techAssessment ? (
-            <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
-              Technical assessment has not been completed. Go to "Assessment Room" to submit candidate answers.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div style={{ padding: "14px 20px", borderRadius: "10px", background: "rgba(99, 102, 241, 0.1)", border: "1px solid rgba(99, 102, 241, 0.3)" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#818cf8", fontWeight: "600" }}>Demonstrated Score</div>
-                  <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#f8fafc" }}>
-                    {techAssessment.score}/100
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Status: <span style={{ color: "#34d399", fontWeight: "600" }}>{techAssessment.status}</span> • Confidence: {(techAssessment.confidence * 100).toFixed(0)}%
-                  </div>
-                  <p style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "4px" }}>
-                    Evaluated against actual MCQ choices, SQL syntax, and graph algorithm complexity.
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#818cf8", fontWeight: "700", marginBottom: "6px" }}>
-                  Skill Breakdown Scores:
-                </h4>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px" }}>
-                  {Object.entries(techAssessment.skill_breakdown || {}).map(([skill, val]) => (
-                    <div key={skill} style={{ padding: "10px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#cbd5e1" }}>{skill}</div>
-                      <div style={{ fontSize: "1.1rem", fontWeight: "700", color: val >= 80 ? "#10b981" : "#f59e0b" }}>
-                        {val}/100
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#38bdf8", fontWeight: "700", marginBottom: "6px" }}>
-                  Demonstrated Technical Evidence:
-                </h4>
-                <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1" }}>
-                  {techAssessment.evidence?.map((ev, idx) => (
-                    <li key={idx}>{ev}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 4: Standardized Behavioral Assessment */}
-      {activeTab === "behavioral" && (
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-            Culture-Fit Agent (Standardized STAR Behavioral Assessment)
-          </h3>
-
-          {!behAssessment ? (
-            <div style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
-              Behavioral assessment not yet submitted.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div style={{ padding: "14px 20px", borderRadius: "10px", background: "rgba(168, 85, 247, 0.1)", border: "1px solid rgba(168, 85, 247, 0.3)" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#c084fc", fontWeight: "600" }}>Behavioral STAR Score</div>
-                  <div style={{ fontSize: "1.8rem", fontWeight: "800", color: "#f8fafc" }}>
-                    {behAssessment.score}/100
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Status: <span style={{ color: behAssessment.status === "COMPLETED" ? "#34d399" : "#fb7185", fontWeight: "600" }}>{behAssessment.status}</span>
-                  </div>
-                  <p style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "4px" }}>
-                    Standardized questions only. Zero inference from demographic traits or resume fluff.
-                  </p>
-                </div>
-              </div>
-
-              {behAssessment.status === "INSUFFICIENT_EVIDENCE" && (
-                <div style={{ padding: "12px 16px", borderRadius: "8px", background: "rgba(244, 63, 94, 0.15)", border: "1px solid rgba(244, 63, 94, 0.3)", color: "#fb7185", fontSize: "0.8rem" }}>
-                  <strong>INSUFFICIENT_EVIDENCE Triggered:</strong> Candidate responses were too brief to evaluate competencies reliably. Requires human interviewer follow-up inquiry.
-                </div>
-              )}
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#c084fc", fontWeight: "700", marginBottom: "6px" }}>
-                  Competency Breakdown:
-                </h4>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px" }}>
-                  {Object.entries(behAssessment.skill_breakdown || {}).map(([comp, val]) => (
-                    <div key={comp} style={{ padding: "10px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)", border: "1px solid rgba(255, 255, 255, 0.05)" }}>
-                      <div style={{ fontSize: "0.75rem", color: "#cbd5e1", textTransform: "capitalize" }}>{comp}</div>
-                      <div style={{ fontSize: "1.1rem", fontWeight: "700", color: val >= 75 ? "#34d399" : "#fbbf24" }}>
-                        {val}/100
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <h4 style={{ fontSize: "0.85rem", color: "#38bdf8", fontWeight: "700", marginBottom: "6px" }}>
-                  Behavioral STAR Evidence:
-                </h4>
-                <ul style={{ paddingLeft: "18px", fontSize: "0.8rem", color: "#cbd5e1" }}>
-                  {behAssessment.evidence?.map((ev, idx) => (
-                    <li key={idx}>{ev}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 5: Panel Coordinator & Bias Check */}
-      {activeTab === "panel" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-          {latestPanel && (
-            <div className="glass-card" style={{ padding: "24px" }}>
-              <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-                Panel Coordinator Merged Synthesis
-              </h3>
-              
-              <ScoreRadar
-                resumeScore={latestPanel.resume_score}
-                skillScore={latestPanel.skill_score}
-                cultureScore={latestPanel.culture_score}
-                mergedScore={latestPanel.merged_score}
-              />
-
-              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <div style={{ padding: "12px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)" }}>
-                  <div style={{ fontSize: "0.8rem", color: "#38bdf8", fontWeight: "700" }}>Recommendation:</div>
-                  <div style={{ fontSize: "1rem", fontWeight: "800", color: "#f8fafc" }}>
-                    {latestPanel.recommendation}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {latestBias && (
-            <div className="glass-card" style={{ padding: "24px" }}>
-              <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-                Bias Checker Audit Record
-              </h3>
-              <BiasAlertBanner biasCheck={latestBias} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 6: Human Review Decision */}
-      {activeTab === "review" && (
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "14px" }}>
-            Authenticated Human Review Decision
-          </h3>
-
-          {latestReview ? (
-            <div style={{ padding: "16px", borderRadius: "10px", background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.3)" }}>
-              <h4 style={{ fontSize: "1rem", fontWeight: "800", color: "#34d399" }}>
-                Decision: {latestReview.decision}
-              </h4>
-              <p style={{ fontSize: "0.85rem", color: "#f8fafc", marginTop: "6px" }}>
-                "{latestReview.notes}"
-              </p>
-              <div style={{ fontSize: "0.72rem", color: "#94a3b8", marginTop: "10px" }}>
-                Reviewer: {latestReview.reviewer_name} ({latestReview.reviewer_id}) • {new Date(latestReview.timestamp).toLocaleString()}
-              </div>
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", padding: "30px" }}>
-              <p style={{ color: "#fbbf24", fontSize: "0.9rem", fontWeight: "600", marginBottom: "14px" }}>
-                This candidate is awaiting human review. Go to the Human Review Station to review complete evidence and submit the final decision.
-              </p>
-              <button
-                onClick={() => setActivePage("reviews")}
-                className="btn btn-primary"
-                style={{ padding: "8px 18px" }}
-              >
-                Open Human Review Station
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab 7: Candidate Memory & Audit Log */}
-      {activeTab === "audit" && (
-        <div className="glass-card" style={{ padding: "24px" }}>
-          <h3 style={{ fontSize: "1.1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "16px" }}>
-            Candidate Immutable Audit Trail
-          </h3>
-          <AuditTimeline timeline={candidate.audit_logs} />
-        </div>
-      )}
+        </Card>
+      </div>
     </div>
   );
 }

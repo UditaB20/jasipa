@@ -1,1024 +1,325 @@
-import React, { useState, useEffect, useRef } from "react";
-import { 
-  Briefcase, 
-  CheckCircle2, 
-  Clock, 
-  FileText, 
-  Send, 
-  User, 
-  Code, 
-  MessageSquare, 
-  AlertCircle, 
-  CheckCircle,
-  ChevronRight,
-  LayoutDashboard,
-  Edit3,
-  Save,
-  X,
-  Upload,
-  FileUp,
-  ShieldCheck
-} from "lucide-react";
-import { 
-  getCandidateProfile, 
-  getCandidateApplications, 
-  getCandidateJobs, 
-  applyCandidateJob, 
-  getCandidateAssessments, 
-  submitCandidateTechnical, 
-  submitCandidateBehavioral, 
-  getCandidateTimeline,
-  getCandidateExplanation,
-  requestCandidateReReview,
-  updateCandidateProfile,
-  uploadCandidateResume
+import { useState } from "react";
+import { Briefcase, CheckCircle2, FileText, Play, Send, Upload } from "lucide-react";
+import {
+  applyCandidateJob, getCandidateAssessments, getCandidateJobs, getCandidateProfile, getCandidateTimeline,
+  runSampleTests, submitCandidateBehavioral, submitCandidateTechnical, updateCandidateProfile, uploadCandidateResume,
 } from "../services/api";
+import { Alert, Badge, Card, EmptyState, ErrorState, Field, PageHeader, PageLoading, Spinner, useAsync, useToast } from "../components/ui";
+import { ResumeDropzone, validateResumeFile } from "./CandidatesList";
 
-export default function CandidatePortal({ currentUser, onLogout }) {
-  const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, jobs, applications, assessments, profile
-  const [profile, setProfile] = useState(null);
-  const [applications, setApplications] = useState([]);
-  const [jobs, setJobs] = useState([]);
-  const [timeline, setTimeline] = useState([]);
-  const [assessmentsData, setAssessmentsData] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function CandidatePortal({ section }) {
+  const { data, loading, error, reload } = useAsync(
+    () => Promise.all([getCandidateProfile(), getCandidateTimeline(), getCandidateJobs()]), []);
+  if (loading && !data) return <PageLoading />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const [profile, timeline, jobs] = data;
+  const job = jobs.find((j) => j.jd_id === profile.target_jd_id);
 
-  // Apply form state
-  const [selectedJobToApply, setSelectedJobToApply] = useState(null);
-  const [resumeTextInput, setResumeTextInput] = useState("");
-  const [applyLoading, setApplyLoading] = useState(false);
-  const [applySuccessMsg, setApplySuccessMsg] = useState(null);
+  if (section === "jobs") return <JobsSection profile={profile} jobs={jobs} onChange={reload} />;
+  if (section === "assessments") return <AssessmentsSection onChange={reload} />;
+  if (section === "profile") return <ProfileSection profile={profile} onChange={reload} />;
+  return <Overview profile={profile} timeline={timeline} job={job} />;
+}
 
-  // Technical Assessment answers state
-  const [techAnswers, setTechAnswers] = useState({});
-  const [techSubmitting, setTechSubmitting] = useState(false);
-  const [techDoneMsg, setTechDoneMsg] = useState(null);
+function Overview({ profile, timeline, job }) {
+  const first = profile.name.split(" ")[0];
+  const steps = timeline.timeline;
+  const next = !profile.has_resume ? { text: "Upload your resume so we can match you to roles.", href: "#/profile", cta: "Upload resume" }
+    : !job ? { text: "Browse open roles and apply to the one that fits you.", href: "#/jobs", cta: "Browse roles" }
+    : ["APPLIED", "RESUME_SCREENED", "TECHNICAL_ASSESSED"].includes(profile.current_stage) ? { text: "Complete your assessments so the hiring team can review your application.", href: "#/assessments", cta: "Open assessments" }
+    : null;
+  return (
+    <div className="page page-narrow">
+      <PageHeader title={`Hello, ${first}`} subtitle={job ? `Your application for ${job.title}` : "You have not applied to a role yet."} />
+      {next && <div className="mb-16"><Alert tone="info" title="Next step" action={<a className="btn btn-primary btn-sm" href={next.href}>{next.cta}</a>}>{next.text}</Alert></div>}
+      {timeline.info_requested && <div className="mb-16"><Alert tone="warning" title="The hiring team asked for more information">A recruiter will contact you about the next step.</Alert></div>}
+      {job && (
+        <Card title="Application progress">
+          <div className="steps">
+            {steps.map((s) => (
+              <div key={s.stage} className={`step ${s.status === "COMPLETED" ? "done" : s.status === "CURRENT" ? "current" : ""}`}>
+                <div className="step-bar" /><span>{s.label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="xs dim mt-16">Automated scoring helps the hiring team compare applications, but a person reviews every application and makes the decision.</p>
+        </Card>
+      )}
+    </div>
+  );
+}
 
-  // Behavioral Assessment answers state
-  const [behAnswers, setBehAnswers] = useState({});
-  const [behSubmitting, setBehSubmitting] = useState(false);
-  const [behDoneMsg, setBehDoneMsg] = useState(null);
+function JobsSection({ profile, jobs, onChange }) {
+  const toast = useToast();
+  const [applying, setApplying] = useState(null);
+  const [open, setOpen] = useState(null);
+  const locked = profile.target_jd_id && !["REGISTERED", "APPLIED", "MANUAL_REVIEW_REQUIRED"].includes(profile.current_stage);
 
-  // Edit Profile state
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editFormData, setEditFormData] = useState({
-    name: "",
-    phone: "",
-    education: "",
-    experience_years: 0,
-    skills_text: ""
-  });
-  const [saveProfileLoading, setSaveProfileLoading] = useState(false);
-  const [profileSuccessMsg, setProfileSuccessMsg] = useState(null);
-
-  // Resume upload state
-  const [resumeUploading, setResumeUploading] = useState(false);
-  const [resumeUploadMsg, setResumeUploadMsg] = useState(null);
-  const resumeFileRef = useRef(null);
-
-  // Transparency & Rights state (NYC LL 144 / EU AI Act)
-  const [explanationData, setExplanationData] = useState(null);
-  const [reReviewLoading, setReReviewLoading] = useState(false);
-  const [reReviewMsg, setReReviewMsg] = useState(null);
-
-
-  const startEditProfile = () => {
-    setEditFormData({
-      name: profile?.name || "",
-      phone: profile?.phone || "",
-      education: profile?.education || "",
-      experience_years: profile?.experience_years || 0,
-      skills_text: (profile?.skills_extracted || []).join(", ")
-    });
-    setProfileSuccessMsg(null);
-    setIsEditingProfile(true);
-  };
-
-  const handleSaveProfile = async (e) => {
-    e.preventDefault();
-    setSaveProfileLoading(true);
-    setProfileSuccessMsg(null);
+  const apply = async (job) => {
+    setApplying(job.jd_id);
     try {
-      const skillsArray = editFormData.skills_text
-        .split(",")
-        .map(s => s.trim())
-        .filter(Boolean);
-
-      const res = await updateCandidateProfile({
-        name: editFormData.name,
-        phone: editFormData.phone,
-        education: editFormData.education,
-        experience_years: parseFloat(editFormData.experience_years) || 0,
-        skills_extracted: skillsArray
-      });
-
-      setProfile(res);
-      setProfileSuccessMsg("Your candidate profile was updated successfully!");
-      setIsEditingProfile(false);
-      loadCandidateData();
+      await applyCandidateJob(job.jd_id);
+      toast(`Application submitted for ${job.title}.`);
+      await onChange();
+      window.location.hash = "/assessments";
     } catch (err) {
-      alert("Failed to update profile: " + err.message);
+      toast(err.message, "error");
     } finally {
-      setSaveProfileLoading(false);
+      setApplying(null);
     }
   };
 
-  const handleResumeUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setResumeUploadMsg({ type: "error", text: "Only PDF files are accepted." });
-      return;
-    }
-    setResumeUploading(true);
-    setResumeUploadMsg(null);
-    try {
-      const result = await uploadCandidateResume(file);
-      setResumeUploadMsg({
-        type: "success",
-        text: `Resume uploaded! Found ${result.skills_extracted?.length || 0} skills — profile updated automatically.`
-      });
-      loadCandidateData();
-    } catch (err) {
-      setResumeUploadMsg({ type: "error", text: "Upload failed: " + err.message });
-    } finally {
-      setResumeUploading(false);
-      if (resumeFileRef.current) resumeFileRef.current.value = "";
-    }
-  };
+  return (
+    <div className="page page-narrow">
+      <PageHeader title="Open roles" subtitle="Applying uses the resume on your profile." />
+      {!profile.has_resume && <div className="mb-16"><Alert tone="info" action={<a className="btn btn-secondary btn-sm" href="#/profile">Upload resume</a>}>Upload your resume before applying.</Alert></div>}
+      {jobs.length === 0 ? <Card><EmptyState icon={Briefcase} title="No open roles right now">Check back soon.</EmptyState></Card> : (
+        <div className="stack">
+          {jobs.map((job) => {
+            const current = job.jd_id === profile.target_jd_id;
+            return (
+              <Card key={job.jd_id} title={job.title} subtitle={`${job.department} · ${job.min_experience}+ years`}
+                actions={current ? <Badge tone="success">Applied</Badge> : (
+                  <button className="btn btn-primary btn-sm" disabled={!profile.has_resume || locked || applying} onClick={() => apply(job)}>
+                    {applying === job.jd_id && <Spinner />}Apply
+                  </button>)}>
+                <p className="small muted" style={{ whiteSpace: "pre-wrap" }}>{open === job.jd_id ? job.description : job.description.split("\n")[0]}</p>
+                <div className="chips mt-12">{job.required_skills.map((s) => <span key={s} className="chip">{s}</span>)}</div>
+                {job.description.includes("\n") && <button className="link-btn small mt-8" onClick={() => setOpen(open === job.jd_id ? null : job.jd_id)}>{open === job.jd_id ? "Show less" : "Full description"}</button>}
+              </Card>
+            );
+          })}
+          {locked && <p className="xs dim">You already have an application in progress. Contact the recruiter to change roles.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  useEffect(() => {
-
-    loadCandidateData();
-  }, []);
-
-  async function loadCandidateData() {
-    setLoading(true);
-    try {
-      const [prof, apps, jbs, tline, assess] = await Promise.all([
-        getCandidateProfile().catch(() => null),
-        getCandidateApplications().catch(() => []),
-        getCandidateJobs().catch(() => []),
-        getCandidateTimeline().catch(() => ({ timeline: [] })),
-        getCandidateAssessments().catch(() => null)
-      ]);
-
-      setProfile(prof);
-      setApplications(apps || []);
-      setJobs(jbs || []);
-      setTimeline(tline?.timeline || []);
-      setAssessmentsData(assess);
-    } catch (err) {
-      console.error("Error loading candidate portal data:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const handleApply = async (e) => {
-    e.preventDefault();
-    if (!selectedJobToApply) return;
-    setApplyLoading(true);
-    setApplySuccessMsg(null);
-
-    try {
-      await applyCandidateJob({
-        jd_id: selectedJobToApply.jd_id,
-        resume_text: resumeTextInput || "Candidate submitted resume via portal."
-      });
-      setApplySuccessMsg(`Application submitted successfully for ${selectedJobToApply.title}!`);
-      setSelectedJobToApply(null);
-      setResumeTextInput("");
-      loadCandidateData();
-    } catch (err) {
-      alert("Failed to submit application: " + err.message);
-    } finally {
-      setApplyLoading(false);
-    }
-  };
-
-  const handleSubmitTechnical = async (e) => {
-    e.preventDefault();
-    setTechSubmitting(true);
-    try {
-      const answersList = Object.entries(techAnswers).map(([qid, ans]) => ({
-        question_id: qid,
-        answer_text: ans
-      }));
-      const res = await submitCandidateTechnical({ answers: answersList });
-      setTechDoneMsg("Technical assessment submitted successfully!");
-      loadCandidateData();
-    } catch (err) {
-      alert("Failed to submit technical answers: " + err.message);
-    } finally {
-      setTechSubmitting(false);
-    }
-  };
-
-  const handleSubmitBehavioral = async (e) => {
-    e.preventDefault();
-    setBehSubmitting(true);
-    try {
-      const answersList = Object.entries(behAnswers).map(([qid, ans]) => ({
-        question_id: qid,
-        answer_text: ans
-      }));
-      const res = await submitCandidateBehavioral({ answers: answersList });
-      setBehDoneMsg("Behavioral assessment submitted successfully!");
-      loadCandidateData();
-    } catch (err) {
-      alert("Failed to submit behavioral answers: " + err.message);
-    } finally {
-      setBehSubmitting(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === "rights" && !explanationData) {
-      getCandidateExplanation()
-        .then(setExplanationData)
-        .catch(err => console.error("Failed to load explanation:", err));
-    }
-  }, [activeTab, explanationData]);
-
-  const handleRequestReReview = async () => {
-    setReReviewLoading(true);
-    setReReviewMsg(null);
-    try {
-      const res = await requestCandidateReReview();
-      setReReviewMsg(res.message);
-    } catch (err) {
-      setReReviewMsg("Request failed: " + err.message);
-    } finally {
-      setReReviewLoading(false);
-    }
-  };
-
-  if (loading) {
+function AssessmentsSection({ onChange }) {
+  const { data, loading, error, reload } = useAsync(getCandidateAssessments, []);
+  if (loading && !data) return <PageLoading />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  if (!data.available) {
     return (
-      <div style={{ padding: "60px 20px", textAlign: "center", color: "#94a3b8" }}>
-        Loading your candidate career portal...
+      <div className="page page-narrow">
+        <PageHeader title="Assessments" />
+        <Card><EmptyState icon={FileText} title="Apply to a role first" action={<a className="btn btn-primary" href="#/jobs">Browse roles</a>}>
+          Your assessments are generated for the role you apply to.
+        </EmptyState></Card>
       </div>
     );
   }
+  const done = async () => { await reload(); await onChange(); };
+  return (
+    <div className="page page-narrow">
+      <PageHeader title="Assessments" subtitle={`For ${data.job_title}. Every applicant to this role answers the same questions. Each part can be submitted once.`} />
+      <div className="stack">
+        <AssessmentForm kind="technical" title="Technical assessment" part={data.technical} onSubmitted={done} />
+        <AssessmentForm kind="behavioral" title="Behavioral assessment" part={data.behavioral} onSubmitted={done} />
+      </div>
+    </div>
+  );
+}
 
-  const candidateName = profile?.name || currentUser?.name || "Candidate";
+function AssessmentForm({ kind, title, part, onSubmitted }) {
+  const toast = useToast();
+  const [answers, setAnswers] = useState(() => Object.fromEntries(part.questions.map((q) => [q.question_id, q.coding?.starter_code || ""])));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (id, value) => setAnswers((a) => ({ ...a, [id]: value }));
+
+  if (part.completed) {
+    return <Card title={title} actions={<Badge tone="success"><CheckCircle2 size={12} />Submitted</Badge>}><p className="muted small">Your answers were received. The hiring team reviews them together with your resume.</p></Card>;
+  }
+
+  const unanswered = part.questions.filter((q) => !String(answers[q.question_id] || "").trim() || answers[q.question_id] === q.coding?.starter_code).length;
+  const submit = async () => {
+    if (unanswered && !window.confirm(`${unanswered} question(s) are unanswered. Submit anyway? You cannot change answers afterwards.`)) return;
+    setBusy(true);
+    setError(null);
+    const payload = part.questions.map((q) => ({ question_id: q.question_id, answer_text: answers[q.question_id] || "" }));
+    try {
+      await (kind === "technical" ? submitCandidateTechnical(payload) : submitCandidateBehavioral(payload));
+      toast(`${title} submitted.`);
+      await onSubmitted();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <div style={{ display: "flex", minHeight: "calc(100vh - 57px)" }}>
-      {/* Candidate Left Navigation */}
-      <aside style={{
-        width: "220px",
-        background: "#0f172a",
-        borderRight: "1px solid #334155",
-        padding: "16px 12px",
-        flexShrink: 0
-      }}>
-        <div style={{ padding: "8px 12px 6px", fontSize: "0.75rem", fontWeight: "600", color: "#64748b", textTransform: "uppercase" }}>
-          My Career
+    <Card title={title} subtitle={kind === "behavioral" ? "Describe real situations: the Situation, your Task, the Actions you took and the Result." : `${part.questions.length} questions`}>
+      <div className="stack">
+        {part.questions.map((q, i) => (
+          <div key={q.question_id} className="inset">
+            <div className="row-between wrap mb-16" style={{ marginBottom: 8 }}>
+              <span className="xs dim">Question {i + 1} of {part.questions.length} · {q.competency_or_skill}</span>
+              <Badge>{q.type === "mcq" ? "Choose one" : q.type === "coding" ? "Python" : q.type === "behavioral" ? "STAR answer" : "Written answer"}</Badge>
+            </div>
+            {q.title && <div style={{ fontWeight: 600 }} className="mb-4">{q.title}</div>}
+            <p className="small" style={{ whiteSpace: "pre-wrap" }}>{q.prompt}</p>
+            <div className="mt-12">
+              {q.type === "mcq" ? (
+                <div className="stack-sm" role="radiogroup">
+                  {q.options.map((opt) => {
+                    const letter = opt.slice(0, 1);
+                    return (
+                      <label key={opt} className={`option ${answers[q.question_id] === letter ? "selected" : ""}`}>
+                        <input type="radio" name={q.question_id} checked={answers[q.question_id] === letter} onChange={() => set(q.question_id, letter)} />
+                        <span className="small">{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : q.type === "coding" ? (
+                <CodingQuestion q={q} value={answers[q.question_id]} onChange={(v) => set(q.question_id, v)} />
+              ) : (
+                <textarea className="textarea" rows={kind === "behavioral" ? 7 : 5} value={answers[q.question_id]} maxLength={20000}
+                  onChange={(e) => set(q.question_id, e.target.value)} aria-label={`Answer to question ${i + 1}`}
+                  placeholder={kind === "behavioral" ? "Situation… Task… Action… Result…" : ""} />
+              )}
+            </div>
+          </div>
+        ))}
+        {error && <Alert tone="danger">{error}</Alert>}
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          <span className="xs dim">{unanswered ? `${unanswered} unanswered` : "All questions answered"}</span>
+          <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? <Spinner /> : <Send size={14} />}Submit {kind} assessment</button>
         </div>
-        <nav style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          {[
-            { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-            { id: "jobs", label: "Browse Jobs", icon: Briefcase },
-            { id: "applications", label: "My Applications", icon: Clock },
-            { id: "assessments", label: "Assessments", icon: Code },
-            { id: "rights", label: "Transparency & Rights", icon: ShieldCheck },
-            { id: "profile", label: "My Profile", icon: User },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  padding: "9px 12px",
-                  borderRadius: "6px",
-                  border: "none",
-                  background: isActive ? "#1e293b" : "transparent",
-                  color: isActive ? "#ffffff" : "#94a3b8",
-                  fontWeight: isActive ? "600" : "500",
-                  fontSize: "0.875rem",
-                  cursor: "pointer",
-                  textAlign: "left",
-                }}
-              >
-                <Icon size={16} color={isActive ? "#34d399" : "#64748b"} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
+      </div>
+    </Card>
+  );
+}
 
-      {/* Main Content Area */}
-      <main style={{ flex: 1, padding: "28px 36px", overflowY: "auto", maxWidth: "1200px" }}>
-        
-        {/* TAB 1: DASHBOARD */}
-        {activeTab === "dashboard" && (
-          <div>
-            <div style={{ marginBottom: "24px" }}>
-              <h2 className="page-title">Welcome, {candidateName}</h2>
-              <p className="page-subtitle">Track your application status, complete assessments, and explore open roles.</p>
-            </div>
+function CodingQuestion({ q, value, onChange }) {
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const run = async () => {
+    setRunning(true);
+    try {
+      setResult(await runSampleTests(q.question_id, value));
+    } catch (err) {
+      setResult({ status: "ERROR", error: err.message, tests: [] });
+    } finally {
+      setRunning(false);
+    }
+  };
+  const onKeyDown = (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const { selectionStart: s, selectionEnd: end } = e.target;
+      onChange(value.slice(0, s) + "    " + value.slice(end));
+      requestAnimationFrame(() => { e.target.selectionStart = e.target.selectionEnd = s + 4; });
+    }
+  };
+  return (
+    <div className="stack-sm">
+      <div className="xs dim">Examples</div>
+      {q.coding.examples.map((ex, i) => (
+        <div key={i} className="mono xs muted">{q.coding.function_name}({ex.args.map((a) => JSON.stringify(a)).join(", ")}) → {JSON.stringify(ex.expected)}</div>
+      ))}
+      <textarea className="textarea code-editor" value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown}
+        spellCheck={false} aria-label="Code editor" />
+      <div className="row-between wrap">
+        <span className="xs dim">Your code also runs against {q.coding.hidden_test_count} hidden tests when you submit. Standard library only; no file or network access.</span>
+        <button className="btn btn-secondary btn-sm" onClick={run} disabled={running}>{running ? <Spinner /> : <Play size={13} />}Run examples</button>
+      </div>
+      {result && (
+        result.status === "OK" ? (
+          <Alert tone={result.passed === result.total ? "success" : "warning"} title={`${result.passed} of ${result.total} examples passed`}>
+            {result.tests.filter((t) => !t.passed).map((t) => (
+              <div key={t.index} className="mono xs">Example {t.index + 1}: {t.error}{t.actual !== undefined ? ` (returned ${JSON.stringify(t.actual)})` : ""}</div>
+            ))}
+            {result.runs_remaining != null && <div className="xs dim mt-4">{result.runs_remaining} practice runs left</div>}
+          </Alert>
+        ) : <Alert tone="danger" title={result.status === "COMPILE_ERROR" ? "Syntax error" : "Could not run"}>{result.compile_error || result.error}</Alert>
+      )}
+    </div>
+  );
+}
 
-            {applySuccessMsg && (
-              <div style={{
-                background: "rgba(16, 185, 129, 0.1)",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
-                color: "#34d399",
-                padding: "12px 16px",
-                borderRadius: "8px",
-                marginBottom: "20px",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px"
-              }}>
-                <CheckCircle2 size={18} />
-                <span>{applySuccessMsg}</span>
-              </div>
-            )}
+function ProfileSection({ profile, onChange }) {
+  const toast = useToast();
+  const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [contact, setContact] = useState({ name: profile.name, phone: profile.phone || "" });
+  const [saving, setSaving] = useState(false);
+  const p = profile.resume_profile || {};
+  const locked = ["PANEL_EVALUATED", "BIAS_CHECKED", "HUMAN_REVIEW_PENDING", "INFO_REQUESTED", "DECIDED"].includes(profile.current_stage);
 
-            {/* My Applications Card */}
-            <div className="card" style={{ marginBottom: "28px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc" }}>My Applications</h3>
-                <button onClick={() => setActiveTab("jobs")} className="btn btn-outline" style={{ fontSize: "0.8rem", padding: "4px 10px" }}>
-                  View All Jobs
-                </button>
-              </div>
+  const upload = async () => {
+    const problem = validateResumeFile(file);
+    if (problem) return setFileError(problem);
+    setUploading(true);
+    setFileError(null);
+    try {
+      const res = await uploadCandidateResume(file);
+      toast(res.parse_status === "PARSED" ? "Resume uploaded and read." : "Resume uploaded. Some text was hard to read, so a recruiter will check it.");
+      setFile(null);
+      await onChange();
+    } catch (err) {
+      setFileError(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+  const save = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateCandidateProfile(contact);
+      toast("Contact details saved.");
+      await onChange();
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      setSaving(false);
+    }
+  };
 
-              {applications.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "24px 0", color: "#64748b" }}>
-                  <p>You have not applied to any roles yet.</p>
-                  <button onClick={() => setActiveTab("jobs")} className="btn btn-primary" style={{ marginTop: "12px" }}>
-                    Explore Available Positions
-                  </button>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                  {applications.map((app, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        background: "#0f172a",
-                        border: "1px solid #334155",
-                        borderRadius: "8px",
-                        padding: "14px 18px",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center"
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc" }}>
-                          {app.job_title}
-                        </div>
-                        <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginTop: "2px" }}>
-                          Department: {app.department}
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                        <span className="badge badge-primary">
-                          Stage: {app.current_stage?.replace(/_/g, " ")}
-                        </span>
-                        <button
-                          onClick={() => setActiveTab("assessments")}
-                          className="btn btn-outline"
-                          style={{ padding: "4px 10px", fontSize: "0.75rem" }}
-                        >
-                          Go to Assessment
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Application Journey Timeline */}
-            <div className="card">
-              <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc", marginBottom: "16px" }}>
-                Application Journey Timeline
-              </h3>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                {timeline.map((step, index) => {
-                  const isCompleted = step.status === "COMPLETED";
-                  const isCurrent = step.status === "CURRENT";
-
-                  return (
-                    <div
-                      key={step.stage}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: "14px",
-                        padding: "10px 14px",
-                        borderRadius: "8px",
-                        background: isCurrent ? "rgba(79, 70, 229, 0.08)" : "transparent",
-                        border: isCurrent ? "1px solid rgba(79, 70, 229, 0.3)" : "1px solid transparent"
-                      }}
-                    >
-                      <div style={{ marginTop: "2px" }}>
-                        {isCompleted ? (
-                          <CheckCircle2 size={18} color="#10b981" />
-                        ) : isCurrent ? (
-                          <div style={{ width: "18px", height: "18px", borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "10px", fontWeight: "700" }}>
-                            {index + 1}
-                          </div>
-                        ) : (
-                          <div style={{ width: "18px", height: "18px", borderRadius: "50%", border: "2px solid #475569" }} />
-                        )}
-                      </div>
-
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span style={{ fontSize: "0.875rem", fontWeight: isCurrent ? "700" : "500", color: isCurrent ? "#f8fafc" : isCompleted ? "#cbd5e1" : "#64748b" }}>
-                            {step.label}
-                          </span>
-                          {isCurrent && <span className="badge badge-primary">Current Stage</span>}
-                          {isCompleted && <span className="badge badge-success">Completed</span>}
-                        </div>
-                        <p style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "2px" }}>
-                          {step.description}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+  return (
+    <div className="page page-narrow">
+      <PageHeader title="Profile & resume" />
+      <div className="stack">
+        <Card title="Resume" subtitle={profile.resume_filename ? `Current file: ${profile.resume_filename}` : "No resume uploaded yet"}>
+          {locked ? <Alert tone="info">Your application is under review, so your resume can no longer be changed. Contact the recruiter if something is wrong.</Alert> : (
+            <div className="stack">
+              <ResumeDropzone file={file} onFile={(f) => { setFile(f); setFileError(validateResumeFile(f)); }} disabled={uploading} />
+              {fileError && <div className="field-error">{fileError}</div>}
+              <div className="row" style={{ justifyContent: "flex-end" }}>
+                <button className="btn btn-primary" onClick={upload} disabled={!file || uploading}>{uploading ? <Spinner /> : <Upload size={14} />}{profile.has_resume ? "Replace resume" : "Upload resume"}</button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* TAB 2: BROWSE JOBS */}
-        {activeTab === "jobs" && (
-          <div>
-            <div style={{ marginBottom: "24px" }}>
-              <h2 className="page-title">Available Positions</h2>
-              <p className="page-subtitle">Explore open job requisitions and submit your application.</p>
+          )}
+          {profile.has_resume && (
+            <>
+              <hr className="divider" />
+              <div className="section-title">What we read from your resume</div>
+              <dl className="kv">
+                <dt>Skills</dt><dd><div className="chips">{(profile.skills_extracted || []).map((s) => <span key={s} className="chip">{s}</span>)}{!profile.skills_extracted?.length && <span className="dim">None recognised</span>}</div></dd>
+                <dt>Experience</dt><dd>{p.experience_years ? `${p.experience_years} years` : "Not found"}</dd>
+                <dt>Education</dt><dd>{(p.education || []).join("; ") || profile.education || "Not found"}</dd>
+                <dt>Projects</dt><dd>{(p.projects || []).length ? <ul className="list">{p.projects.map((x, i) => <li key={i}>{x}</li>)}</ul> : "None listed"}</dd>
+              </dl>
+              <p className="xs dim mt-12">If something is missing, update your resume and upload it again. Contact details are not used in scoring.</p>
+            </>
+          )}
+        </Card>
+        <Card title="Contact details">
+          <form onSubmit={save} className="stack">
+            <div className="form-grid">
+              <Field label="Full name"><input className="input" value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} required minLength={2} /></Field>
+              <Field label="Phone"><input className="input" value={contact.phone} onChange={(e) => setContact({ ...contact, phone: e.target.value })} /></Field>
+              <Field label="Email" hint="Contact the recruiter to change your email."><input className="input" value={profile.email} disabled /></Field>
             </div>
-
-            {selectedJobToApply && (
-              <div className="card" style={{ marginBottom: "28px", borderColor: "#4f46e5" }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc", marginBottom: "8px" }}>
-                  Apply for: {selectedJobToApply.title}
-                </h3>
-                <p style={{ fontSize: "0.85rem", color: "#94a3b8", marginBottom: "16px" }}>
-                  Please paste or summarize your resume highlights and qualifications below:
-                </p>
-
-                <form onSubmit={handleApply}>
-                  <div style={{ marginBottom: "16px" }}>
-                    <label className="form-label">Resume / Profile Highlights</label>
-                    <textarea
-                      rows={5}
-                      className="form-textarea"
-                      placeholder="e.g. Senior Software Engineer with 4 years in Python, FastAPI, React, SQL..."
-                      value={resumeTextInput}
-                      onChange={(e) => setResumeTextInput(e.target.value)}
-                      required
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", gap: "10px" }}>
-                    <button type="submit" className="btn btn-primary" disabled={applyLoading}>
-                      <Send size={15} />
-                      <span>{applyLoading ? "Submitting Application..." : "Submit Application"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedJobToApply(null)}
-                      className="btn btn-outline"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: "16px" }}>
-              {jobs.map((job) => (
-                <div key={job.jd_id} className="card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
-                    <div>
-                      <h3 style={{ fontSize: "1.1rem", fontWeight: "600", color: "#f8fafc" }}>{job.title}</h3>
-                      <div style={{ fontSize: "0.8rem", color: "#94a3b8", marginTop: "2px" }}>
-                        {job.department} • Minimum {job.min_experience} Years Experience
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        setSelectedJobToApply(job);
-                        window.scrollTo({ top: 0, behavior: "smooth" });
-                      }}
-                      className="btn btn-primary"
-                      style={{ padding: "6px 14px" }}
-                    >
-                      <span>Apply Now</span>
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-
-                  <p style={{ fontSize: "0.875rem", color: "#cbd5e1", margin: "12px 0", lineHeight: "1.5" }}>
-                    {job.description}
-                  </p>
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "12px" }}>
-                    {job.required_skills?.map((skill) => (
-                      <span key={skill} className="badge badge-neutral">
-                        {skill}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: MY APPLICATIONS */}
-        {activeTab === "applications" && (
-          <div>
-            <div style={{ marginBottom: "24px" }}>
-              <h2 className="page-title">My Applications</h2>
-              <p className="page-subtitle">Review the status and milestones of your active job submissions.</p>
-            </div>
-
-            {applications.length === 0 ? (
-              <div className="card" style={{ textAlign: "center", padding: "40px" }}>
-                <p style={{ color: "#94a3b8" }}>No active applications found.</p>
-                <button onClick={() => setActiveTab("jobs")} className="btn btn-primary" style={{ marginTop: "12px" }}>
-                  Apply for a Job
-                </button>
-              </div>
-            ) : (
-              <div className="table-container">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Position</th>
-                      <th>Department</th>
-                      <th>Current Stage</th>
-                      <th>Applied Date</th>
-                      <th style={{ textAlign: "right" }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {applications.map((app, i) => (
-                      <tr key={i}>
-                        <td style={{ fontWeight: "600" }}>{app.job_title}</td>
-                        <td style={{ color: "#94a3b8" }}>{app.department}</td>
-                        <td>
-                          <span className="badge badge-primary">
-                            {app.current_stage?.replace(/_/g, " ")}
-                          </span>
-                        </td>
-                        <td style={{ color: "#94a3b8", fontSize: "0.8rem" }}>
-                          {app.applied_date ? new Date(app.applied_date).toLocaleDateString() : "Active"}
-                        </td>
-                        <td style={{ textAlign: "right" }}>
-                          <button
-                            onClick={() => setActiveTab("assessments")}
-                            className="btn btn-outline"
-                            style={{ padding: "4px 10px", fontSize: "0.75rem" }}
-                          >
-                            Assessments
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 4: ASSESSMENTS */}
-        {activeTab === "assessments" && (
-          <div>
-            <div style={{ marginBottom: "24px" }}>
-              <h2 className="page-title">Skill & Behavioral Assessments</h2>
-              <p className="page-subtitle">Demonstrate your technical competencies and structured STAR experiences.</p>
-            </div>
-
-            {techDoneMsg && (
-              <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.3)", color: "#34d399", padding: "10px 14px", borderRadius: "6px", marginBottom: "16px" }}>
-                {techDoneMsg}
-              </div>
-            )}
-
-            {behDoneMsg && (
-              <div style={{ background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.3)", color: "#34d399", padding: "10px 14px", borderRadius: "6px", marginBottom: "16px" }}>
-                {behDoneMsg}
-              </div>
-            )}
-
-            {/* Technical Assessment Section */}
-            <div className="card" style={{ marginBottom: "28px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <div>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc" }}>
-                    Part 1: Technical Assessment
-                  </h3>
-                  <p style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Standardized practical questions evaluated by the Skill-Assessor.
-                  </p>
-                </div>
-                {assessmentsData?.technical?.completed ? (
-                  <span className="badge badge-success">
-                    Submitted & Under Review
-                  </span>
-                ) : (
-                  <span className="badge badge-warning">Pending Submission</span>
-                )}
-              </div>
-
-              {!assessmentsData?.technical?.completed ? (
-                <form onSubmit={handleSubmitTechnical}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "16px" }}>
-                    {(assessmentsData?.technical?.questions || []).map((q, idx) => (
-                      <div key={q.question_id} style={{ background: "#0f172a", padding: "14px", borderRadius: "8px", border: "1px solid #334155" }}>
-                        <div style={{ fontWeight: "600", color: "#f8fafc", fontSize: "0.875rem", marginBottom: "6px" }}>
-                          Q{idx + 1}: {q.prompt}
-                        </div>
-                        <textarea
-                          rows={3}
-                          className="form-textarea"
-                          placeholder="Write your answer or code snippet..."
-                          value={techAnswers[q.question_id] || ""}
-                          onChange={(e) => setTechAnswers({ ...techAnswers, [q.question_id]: e.target.value })}
-                          required
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  <button type="submit" className="btn btn-primary" disabled={techSubmitting}>
-                    {techSubmitting ? "Submitting..." : "Submit Technical Assessment"}
-                  </button>
-                </form>
-              ) : (
-                <p style={{ color: "#64748b", fontSize: "0.85rem" }}>
-                  Your technical assessment responses have been received and logged for panel review.
-                </p>
-              )}
-            </div>
-
-            {/* Behavioral STAR Assessment Section */}
-            <div className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-                <div>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc" }}>
-                    Part 2: Behavioral Assessment (STAR Method)
-                  </h3>
-                  <p style={{ fontSize: "0.8rem", color: "#94a3b8" }}>
-                    Evaluated for Communication, Teamwork, Problem-Solving, and Adaptability.
-                  </p>
-                </div>
-                {assessmentsData?.behavioral?.completed ? (
-                  <span className="badge badge-success">
-                    Submitted & Under Review
-                  </span>
-                ) : (
-                  <span className="badge badge-warning">Pending Submission</span>
-                )}
-              </div>
-
-              {!assessmentsData?.behavioral?.completed ? (
-                <form onSubmit={handleSubmitBehavioral}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px", marginBottom: "16px" }}>
-                    {(assessmentsData?.behavioral?.questions || []).map((q, idx) => (
-                      <div key={q.question_id} style={{ background: "#0f172a", padding: "14px", borderRadius: "8px", border: "1px solid #334155" }}>
-                        <div style={{ fontWeight: "600", color: "#f8fafc", fontSize: "0.875rem", marginBottom: "6px" }}>
-                          Q{idx + 1}: {q.prompt}
-                        </div>
-                        <textarea
-                          rows={4}
-                          className="form-textarea"
-                          placeholder="Describe the Situation, Task, Action you took, and Result achieved (STAR)..."
-                          value={behAnswers[q.question_id] || ""}
-                          onChange={(e) => setBehAnswers({ ...behAnswers, [q.question_id]: e.target.value })}
-                          required
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  <button type="submit" className="btn btn-primary" disabled={behSubmitting}>
-                    {behSubmitting ? "Submitting..." : "Submit Behavioral Assessment"}
-                  </button>
-                </form>
-              ) : (
-                <p style={{ color: "#64748b", fontSize: "0.85rem" }}>
-                  Your behavioral answers have been received and logged for panel review.
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: PROFILE */}
-        {activeTab === "profile" && (
-          <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" }}>
-              <div>
-                <h2 className="page-title">Candidate Profile</h2>
-                <p className="page-subtitle">Your personal account details and stored application credentials.</p>
-              </div>
-
-              {!isEditingProfile && (
-                <button
-                  onClick={startEditProfile}
-                  className="btn btn-outline"
-                  style={{ gap: "6px" }}
-                >
-                  <Edit3 size={15} />
-                  <span>Edit Profile</span>
-                </button>
-              )}
-            </div>
-
-            {profileSuccessMsg && (
-              <div style={{
-                background: "rgba(16, 185, 129, 0.1)",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
-                color: "#34d399",
-                padding: "12px 16px",
-                borderRadius: "8px",
-                marginBottom: "20px",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px"
-              }}>
-                <CheckCircle2 size={18} />
-                <span>{profileSuccessMsg}</span>
-              </div>
-            )}
-
-            {isEditingProfile ? (
-              <div className="card" style={{ maxWidth: "650px", borderColor: "#4f46e5" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "18px" }}>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "600", color: "#f8fafc" }}>
-                    Edit Personal & Professional Details
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setIsEditingProfile(false)}
-                    style={{ background: "transparent", border: "none", color: "#94a3b8", cursor: "pointer" }}
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <form onSubmit={handleSaveProfile} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                  <div>
-                    <label className="form-label">Full Name</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={editFormData.name}
-                      onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
-                      required
-                    />
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px" }}>
-                    <div>
-                      <label className="form-label">Phone Number</label>
-                      <input
-                        type="text"
-                        className="form-input"
-                        placeholder="+1 (555) 000-0000"
-                        value={editFormData.phone}
-                        onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="form-label">Years of Experience</label>
-                      <input
-                        type="number"
-                        step="0.5"
-                        min="0"
-                        className="form-input"
-                        value={editFormData.experience_years}
-                        onChange={(e) => setEditFormData({ ...editFormData, experience_years: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="form-label">Highest Education</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. Master's in Computer Science"
-                      value={editFormData.education}
-                      onChange={(e) => setEditFormData({ ...editFormData, education: e.target.value })}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="form-label">Skills (comma-separated)</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="e.g. Python, SQL, React, FastAPI, Docker"
-                      value={editFormData.skills_text}
-                      onChange={(e) => setEditFormData({ ...editFormData, skills_text: e.target.value })}
-                    />
-                    <span style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px", display: "block" }}>
-                      Separate skills with commas (e.g. Python, SQL, Docker)
-                    </span>
-                  </div>
-
-                  <div style={{ display: "flex", gap: "10px", marginTop: "8px" }}>
-                    <button type="submit" className="btn btn-primary" disabled={saveProfileLoading}>
-                      <Save size={15} />
-                      <span>{saveProfileLoading ? "Saving Changes..." : "Save Profile"}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditingProfile(false)}
-                      className="btn btn-outline"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ) : (
-              <div className="card" style={{ maxWidth: "600px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginBottom: "16px" }}>
-                  <div>
-                    <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Full Name</span>
-                    <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginTop: "2px" }}>
-                      {profile?.name || candidateName}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Email Address</span>
-                    <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginTop: "2px" }}>
-                      {profile?.email || currentUser?.email}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Phone</span>
-                    <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginTop: "2px" }}>
-                      {profile?.phone || "Not provided"}
-                    </div>
-                  </div>
-
-                  <div>
-                    <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Years of Experience</span>
-                    <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginTop: "2px" }}>
-                      {profile?.experience_years ? `${profile.experience_years} Years` : "0 Years"}
-                    </div>
-                  </div>
-
-                  <div style={{ gridColumn: "span 2" }}>
-                    <span style={{ fontSize: "0.8rem", color: "#64748b" }}>Education</span>
-                    <div style={{ fontSize: "0.95rem", fontWeight: "600", color: "#f8fafc", marginTop: "2px" }}>
-                      {profile?.education || "Bachelor's Degree"}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: "1px solid #334155" }}>
-                  <span style={{ fontSize: "0.8rem", color: "#64748b", display: "block", marginBottom: "8px" }}>
-                    Extracted Skills & Competencies
-                  </span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                    {(profile?.skills_extracted || ["Python", "FastAPI", "SQL", "React", "Data Structures"]).map((s) => (
-                      <span key={s} className="badge badge-neutral">{s}</span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB: TRANSPARENCY & RIGHTS (NYC LL 144 / EU AI ACT) */}
-        {activeTab === "rights" && (
-          <div>
-            <div style={{ marginBottom: "24px" }}>
-              <h2 className="page-title">AI Governance & Candidate Rights</h2>
-              <p className="page-subtitle">
-                Transparent disclosure under NYC Local Law 144 and EU AI Act Article 14 regarding how Automated Employment Decision Tools (AEDT) assist your evaluation.
-              </p>
-            </div>
-
-            {reReviewMsg && (
-              <div style={{
-                background: "rgba(16, 185, 129, 0.15)",
-                border: "1px solid rgba(16, 185, 129, 0.4)",
-                color: "#34d399",
-                padding: "14px 18px",
-                borderRadius: "8px",
-                marginBottom: "24px",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px"
-              }}>
-                <CheckCircle2 size={20} />
-                <span style={{ fontSize: "0.85rem", fontWeight: "600" }}>{reReviewMsg}</span>
-              </div>
-            )}
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-              {/* Guarantee 1: Strict Non-Autonomous Policy */}
-              <div className="glass-card" style={{ padding: "20px", borderLeft: "4px solid #10b981" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "1.2rem" }}>⚖️</span>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
-                    Core Governance Guarantee: Autonomous Decisions Strictly Prohibited
-                  </h3>
-                </div>
-                <p style={{ fontSize: "0.82rem", color: "#cbd5e1", lineHeight: 1.6 }}>
-                  JASIPA employs specialized multi-agent AI for structured qualification analysis; however, under our mandatory human-in-the-loop charter, 
-                  <strong> AI is strictly prohibited from autonomously rejecting or hiring any applicant</strong>. Every recommendation dossier is reviewed, inspected, and finalized by a verified human HR talent partner.
-                </p>
-              </div>
-
-              {/* Guarantee 2: Blind Screening & Data Minimization */}
-              <div className="glass-card" style={{ padding: "20px", borderLeft: "4px solid #38bdf8" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "1.2rem" }}>👁️</span>
-                  <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
-                    Blind Screening & PII Minimization Active
-                  </h3>
-                </div>
-                <p style={{ fontSize: "0.82rem", color: "#cbd5e1", lineHeight: 1.6 }}>
-                  To prevent demographic and pedigree bias, our system executes an automated redaction pass before AI evaluation models receive your profile. Direct contact identifiers (email address, phone numbers, and external portfolio links) are masked to ensure evaluation is anchored purely to demonstrable skills and requirements.
-                </p>
-              </div>
-
-              {/* Guarantee 3: JD-Anchored Scoring Rubric */}
-              <div className="glass-card" style={{ padding: "20px" }}>
-                <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc", marginBottom: "12px" }}>
-                  Transparent Scoring Rubric Weights
-                </h3>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
-                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Resume Qualification</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#38bdf8" }}>40%</div>
-                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
-                      Explicit verification of required skills and years of relevant domain experience.
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Technical Assessment</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#a855f7" }}>40%</div>
-                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
-                      Practical problem-solving, algorithmic reasoning, and domain exercises.
-                    </div>
-                  </div>
-                  <div style={{ background: "rgba(15, 23, 42, 0.7)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)" }}>
-                    <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>Behavioral Alignment</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: "800", color: "#10b981" }}>20%</div>
-                    <div style={{ fontSize: "0.75rem", color: "#cbd5e1", marginTop: "4px" }}>
-                      STAR-structured assessment of stakeholder communication, adaptability, and teamwork.
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Guarantee 4: Right to Appeal & Re-Review */}
-              <div className="glass-card" style={{ padding: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(30, 41, 59, 0.6)" }}>
-                <div>
-                  <h3 style={{ fontSize: "0.95rem", fontWeight: "700", color: "#f8fafc", margin: 0 }}>
-                    Right to Independent Human Re-Review (NYC LL 144)
-                  </h3>
-                  <p style={{ fontSize: "0.78rem", color: "#94a3b8", margin: "4px 0 0 0" }}>
-                    If you believe your profile or assessments were misunderstood, you have the statutory right to request an independent re-review by a senior HR lead.
-                  </p>
-                </div>
-                <button
-                  onClick={handleRequestReReview}
-                  disabled={reReviewLoading}
-                  className="btn btn-secondary"
-                  style={{ flexShrink: 0, padding: "8px 16px", border: "1px solid rgba(56, 189, 248, 0.4)" }}
-                >
-                  {reReviewLoading ? "Logging Request..." : "Request Human Re-Review"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
+            <div className="row" style={{ justifyContent: "flex-end" }}><button className="btn btn-secondary" disabled={saving}>{saving && <Spinner />}Save</button></div>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

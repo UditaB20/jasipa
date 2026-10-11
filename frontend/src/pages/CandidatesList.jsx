@@ -1,183 +1,179 @@
-import React, { useState, useEffect } from "react";
-import { Search, ArrowRight } from "lucide-react";
-import { getCandidates, getJobs } from "../services/api";
-import StageBadge from "../components/StageBadge";
+import { useMemo, useRef, useState } from "react";
+import { FileUp, Search, UserPlus, Users } from "lucide-react";
+import { getCandidates, getJobs, uploadResume } from "../services/api";
+import { Alert, Card, Drawer, EmptyState, ErrorState, Field, PageHeader, PageLoading, Spinner, StageBadge, fmtDate, useAsync, useToast } from "../components/ui";
 
-// Resumes enter the system via the Candidate Portal (candidate applies) or scripts/import_dataset.py.
-// HR intentionally has no upload path here.
-export default function CandidatesList({ setActivePage, setSelectedCandidateId }) {
-  const [candidates, setCandidates] = useState([]);
-  const [jobs, setJobs] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [stageFilter, setStageFilter] = useState("");
-  const [jdFilter, setJdFilter] = useState("");
-  const [loading, setLoading] = useState(true);
+const FILTERS = [
+  { id: "", label: "All stages" },
+  { id: "awaiting", label: "Awaiting decision", stages: ["PANEL_EVALUATED", "BIAS_CHECKED", "HUMAN_REVIEW_PENDING"] },
+  { id: "in_progress", label: "In progress", stages: ["APPLIED", "RESUME_SCREENED", "TECHNICAL_ASSESSED", "BEHAVIORAL_ASSESSED", "INFO_REQUESTED", "MANUAL_REVIEW_REQUIRED"] },
+  { id: "decided", label: "Decided", stages: ["DECIDED"] },
+];
+const ACCEPTED = [".pdf", ".docx"];
+const MAX_MB = 5;
 
-  useEffect(() => {
-    loadData();
-  }, [stageFilter, jdFilter]);
+export default function CandidatesList({ initialFilter = "" }) {
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState(FILTERS.some((f) => f.id === initialFilter) ? initialFilter : "");
+  const [jobFilter, setJobFilter] = useState("");
+  const [adding, setAdding] = useState(false);
+  const { data, loading, error, reload } = useAsync(() => Promise.all([getCandidates(), getJobs()]), []);
 
-  async function loadData() {
-    try {
-      const [cands, jbList] = await Promise.all([
-        getCandidates(stageFilter, jdFilter),
-        getJobs(),
-      ]);
-      setCandidates(cands);
-      setJobs(jbList);
-    } catch (err) {
-      console.error("Error loading candidate list:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [candidates, jobs] = data || [[], []];
+  const jobTitle = useMemo(() => Object.fromEntries(jobs.map((j) => [j.jd_id, j.title])), [jobs]);
+  const visible = useMemo(() => {
+    const stages = FILTERS.find((f) => f.id === filter)?.stages;
+    const q = search.trim().toLowerCase();
+    return candidates.filter((c) =>
+      (!stages || stages.includes(c.current_stage)) &&
+      (!jobFilter || c.target_jd_id === jobFilter) &&
+      (!q || c.name.toLowerCase().includes(q) || c.email.toLowerCase().includes(q) || (c.skills_extracted || []).some((s) => s.toLowerCase().includes(q))));
+  }, [candidates, filter, jobFilter, search]);
 
-  const filteredCandidates = candidates.filter((c) => {
-    const matchesSearch =
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (c.skills_extracted || []).some(s => s.toLowerCase().includes(searchQuery.toLowerCase()));
-    return matchesSearch;
-  });
+  if (loading && !data) return <PageLoading />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
 
   return (
-    <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-        <div>
-          <h2 style={{ fontSize: "1.4rem", fontWeight: "800", color: "#f8fafc" }}>
-            Candidate Pipeline & Dossiers
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
-            Manage candidate profiles and view multi-agent evaluation statuses. Candidates apply via the Candidate Portal.
-          </p>
+    <div className="page">
+      <PageHeader title="Candidates" subtitle="Applicants from the candidate portal and resumes uploaded by your team."
+        actions={<button className="btn btn-primary" onClick={() => setAdding(true)}><UserPlus size={15} />Add candidate</button>} />
+
+      <div className="row wrap mb-16">
+        <div className="input-icon" style={{ flex: "1 1 260px" }}>
+          <Search size={15} />
+          <input className="input" placeholder="Search name, email or skill" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search candidates" />
         </div>
+        <select className="select" style={{ width: 190 }} value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by stage">
+          {FILTERS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        </select>
+        <select className="select" style={{ width: 230 }} value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} aria-label="Filter by job">
+          <option value="">All jobs</option>
+          {jobs.map((j) => <option key={j.jd_id} value={j.jd_id}>{j.title}</option>)}
+        </select>
       </div>
 
-      {/* Filter and Search Bar */}
-      <div
-        className="glass-card"
-        style={{
-          padding: "16px 20px",
-          marginBottom: "20px",
-          display: "flex",
-          alignItems: "center",
-          gap: "16px",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ position: "relative", flex: 1, minWidth: "260px" }}>
-          <Search size={16} color="#94a3b8" style={{ position: "absolute", left: "12px", top: "12px" }} />
-          <input
-            className="form-input"
-            style={{ paddingLeft: "36px" }}
-            placeholder="Search by candidate name, email, or skill..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-
-        <div style={{ width: "200px" }}>
-          <select
-            className="form-select"
-            value={stageFilter}
-            onChange={(e) => setStageFilter(e.target.value)}
-          >
-            <option value="">All Pipeline Stages</option>
-            <option value="APPLIED">Applied</option>
-            <option value="RESUME_SCREENED">Resume Screened</option>
-            <option value="TECHNICAL_ASSESSED">Technical Assessed</option>
-            <option value="BEHAVIORAL_ASSESSED">Behavioral Assessed</option>
-            <option value="PANEL_EVALUATED">Panel Evaluated</option>
-            <option value="HUMAN_REVIEW_PENDING">Human Review Pending</option>
-            <option value="DECIDED">Decided</option>
-          </select>
-        </div>
-
-        <div style={{ width: "220px" }}>
-          <select
-            className="form-select"
-            value={jdFilter}
-            onChange={(e) => setJdFilter(e.target.value)}
-          >
-            <option value="">All Job Descriptions</option>
-            {jobs.map(j => (
-              <option key={j.jd_id} value={j.jd_id}>{j.title}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Candidates Table */}
-      <div className="glass-card" style={{ overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "0.85rem" }}>
-          <thead>
-            <tr style={{ background: "rgba(15, 23, 42, 0.9)", borderBottom: "1px solid rgba(255, 255, 255, 0.08)", color: "#94a3b8" }}>
-              <th style={{ padding: "14px 20px" }}>Candidate</th>
-              <th style={{ padding: "14px 20px" }}>Cohort Tag</th>
-              <th style={{ padding: "14px 20px" }}>Experience</th>
-              <th style={{ padding: "14px 20px" }}>Target Role</th>
-              <th style={{ padding: "14px 20px" }}>Pipeline Stage</th>
-              <th style={{ padding: "14px 20px", textAlign: "right" }}>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredCandidates.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={{ padding: "30px", textAlign: "center", color: "#64748b" }}>
-                  No candidates found matching the criteria.
-                </td>
-              </tr>
-            ) : (
-              filteredCandidates.map((c) => {
-                const targetJob = jobs.find(j => j.jd_id === c.target_jd_id);
-                return (
-                  <tr
-                    key={c.candidate_id}
-                    style={{
-                      borderBottom: "1px solid rgba(255, 255, 255, 0.04)",
-                      transition: "background 0.2s",
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(30, 41, 59, 0.4)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                  >
-                    <td style={{ padding: "14px 20px" }}>
-                      <div style={{ fontWeight: "700", color: "#f8fafc" }}>{c.name}</div>
-                      <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>{c.email}</div>
+      <Card pad={false}>
+        {visible.length === 0 ? (
+          <EmptyState icon={Users} title={candidates.length ? "No candidates match these filters" : "No candidates yet"}
+            action={!candidates.length && <button className="btn btn-primary" onClick={() => setAdding(true)}>Add candidate</button>}>
+            {candidates.length ? "Try a different stage, job or search term." : "Upload a resume to add the first candidate."}
+          </EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Candidate</th><th className="hide-sm">Job</th><th className="hide-sm">Experience</th><th>Stage</th><th className="hide-sm">Added</th></tr></thead>
+              <tbody>
+                {visible.map((c) => (
+                  <tr key={c.candidate_id} className="clickable" onClick={() => { window.location.hash = `/candidates/${c.candidate_id}`; }}>
+                    <td>
+                      <a className="cell-title" style={{ color: "var(--text)" }} href={`#/candidates/${c.candidate_id}`}>{c.name}</a>
+                      <div className="cell-sub">{c.email}</div>
                     </td>
-                    <td style={{ padding: "14px 20px" }}>
-                      <span style={{ fontSize: "0.75rem", padding: "2px 8px", borderRadius: "6px", background: "rgba(255, 255, 255, 0.05)", color: "#cbd5e1" }}>
-                        {c.cohort_tag || "General Cohort"}
-                      </span>
-                    </td>
-                    <td style={{ padding: "14px 20px", color: "#cbd5e1" }}>
-                      {c.experience_years} yrs
-                    </td>
-                    <td style={{ padding: "14px 20px", color: "#38bdf8", fontWeight: "500" }}>
-                      {targetJob?.title || c.target_jd_id || "Unassigned"}
-                    </td>
-                    <td style={{ padding: "14px 20px" }}>
-                      <StageBadge stage={c.current_stage} />
-                    </td>
-                    <td style={{ padding: "14px 20px", textAlign: "right" }}>
-                      <button
-                        onClick={() => {
-                          setSelectedCandidateId(c.candidate_id);
-                          setActivePage("candidate-detail");
-                        }}
-                        className="btn btn-secondary"
-                        style={{ padding: "6px 12px", fontSize: "0.75rem" }}
-                      >
-                        <span>View Dossier</span>
-                        <ArrowRight size={13} />
-                      </button>
-                    </td>
+                    <td className="hide-sm muted">{jobTitle[c.target_jd_id] || "No application"}</td>
+                    <td className="hide-sm num muted">{c.experience_years ? `${c.experience_years} yrs` : "—"}</td>
+                    <td><StageBadge stage={c.current_stage} /></td>
+                    <td className="hide-sm muted">{fmtDate(c.created_at)}</td>
                   </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <p className="xs dim mt-12">{visible.length} of {candidates.length} candidates</p>
+
+      {adding && <AddCandidateDrawer jobs={jobs} onClose={() => setAdding(false)} onCreated={(c) => { setAdding(false); window.location.hash = `/candidates/${c.candidate_id}`; }} />}
     </div>
+  );
+}
+
+export function validateResumeFile(file) {
+  if (!file) return "Choose a resume file.";
+  if (!ACCEPTED.some((ext) => file.name.toLowerCase().endsWith(ext))) return "Upload a PDF or Word (.docx) file.";
+  if (file.size > MAX_MB * 1024 * 1024) return `The file is larger than ${MAX_MB} MB.`;
+  if (file.size === 0) return "The file is empty.";
+  return null;
+}
+
+export function ResumeDropzone({ file, onFile, disabled }) {
+  const input = useRef(null);
+  const [drag, setDrag] = useState(false);
+  return (
+    <div className={`dropzone ${drag ? "drag" : ""}`} role="button" tabIndex={0} aria-disabled={disabled}
+      onClick={() => !disabled && input.current?.click()}
+      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
+      onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
+      onDrop={(e) => { e.preventDefault(); setDrag(false); if (!disabled && e.dataTransfer.files[0]) onFile(e.dataTransfer.files[0]); }}>
+      <FileUp size={22} color="var(--text-3)" />
+      <div className="title">{file ? file.name : "Drop a resume here or click to browse"}</div>
+      <div className="xs dim mt-4">{file ? `${(file.size / 1024).toFixed(0)} KB` : `PDF or DOCX, up to ${MAX_MB} MB`}</div>
+      <input ref={input} type="file" accept=".pdf,.docx" hidden onChange={(e) => e.target.files[0] && onFile(e.target.files[0])} />
+    </div>
+  );
+}
+
+function AddCandidateDrawer({ jobs, onClose, onCreated }) {
+  const toast = useToast();
+  const [form, setForm] = useState({ name: "", email: "", phone: "", target_jd_id: jobs[0]?.jd_id || "", cohort_tag: "" });
+  const [file, setFile] = useState(null);
+  const [errors, setErrors] = useState({});
+  const [serverError, setServerError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = async (e) => {
+    e?.preventDefault();
+    const next = {};
+    if (form.name.trim().length < 2) next.name = "Enter the candidate's full name.";
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) next.email = "Enter a valid email address.";
+    const fileError = validateResumeFile(file);
+    if (fileError) next.file = fileError;
+    setErrors(next);
+    if (Object.keys(next).length) return;
+    setBusy(true);
+    setServerError(null);
+    const data = new FormData();
+    Object.entries(form).forEach(([k, v]) => v && data.append(k, v.trim()));
+    data.append("file", file);
+    try {
+      const candidate = await uploadResume(data);
+      toast(`${candidate.name} added. Resume parsed${candidate.target_jd_id ? " and screened" : ""}.`);
+      onCreated(candidate);
+    } catch (err) {
+      setServerError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Drawer title="Add candidate" onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy && <Spinner />}{busy ? "Uploading" : "Add and screen"}</button>
+      </>}>
+      <form onSubmit={submit} className="stack">
+        {serverError && <Alert tone="danger" title="Upload failed">{serverError}</Alert>}
+        <div>
+          <ResumeDropzone file={file} onFile={(f) => { setFile(f); setErrors({ ...errors, file: validateResumeFile(f) }); }} disabled={busy} />
+          {errors.file && <div className="field-error mt-4">{errors.file}</div>}
+        </div>
+        <p className="xs dim">Skills, education, experience and projects are extracted from the file. If this email already exists, the candidate's resume is replaced.</p>
+        <div className="form-grid">
+          <Field label="Full name" error={errors.name}><input className={`input ${errors.name ? "invalid" : ""}`} value={form.name} onChange={set("name")} /></Field>
+          <Field label="Email" error={errors.email}><input className={`input ${errors.email ? "invalid" : ""}`} type="email" value={form.email} onChange={set("email")} /></Field>
+          <Field label="Phone (optional)"><input className="input" value={form.phone} onChange={set("phone")} /></Field>
+          <Field label="Job">
+            <select className="select" value={form.target_jd_id} onChange={set("target_jd_id")}>
+              <option value="">No application yet</option>
+              {jobs.map((j) => <option key={j.jd_id} value={j.jd_id}>{j.title}</option>)}
+            </select>
+          </Field>
+          <Field className="span-2" label="Monitoring cohort (optional)" hint="Used only for aggregate bias monitoring. Never shown to evaluation agents.">
+            <input className="input" value={form.cohort_tag} onChange={set("cohort_tag")} placeholder="e.g. Cohort_Alpha" />
+          </Field>
+        </div>
+      </form>
+    </Drawer>
   );
 }

@@ -1,153 +1,111 @@
-const API_BASE = "http://localhost:8000/api";
+const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000") + "/api";
 
-export async function fetchApi(endpoint, options = {}) {
-  const url = `${API_BASE}${endpoint}`;
-  const token = localStorage.getItem("token");
-
-  const headers = {
-    "Content-Type": "application/json",
-    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
-    ...options.headers,
-  };
-
-  try {
-    const res = await fetch(url, { ...options, headers });
-    if (!res.ok) {
-      if (res.status === 401) {
-        // Token expired or invalid
-        console.warn("Session expired or unauthorized on", endpoint);
-      }
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || "API Request Failed");
-    }
-    return await res.json();
-  } catch (err) {
-    console.error(`API error on ${endpoint}:`, err);
-    throw err;
+export class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
   }
 }
 
-// Auth APIs
-export const getMe = () => fetchApi("/auth/me");
-export const login = (email, password) => 
-  fetchApi("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+function describe(detail, fallback) {
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    // FastAPI validation errors: show the first readable message.
+    const first = detail[0];
+    const field = first?.loc?.slice(-1)[0];
+    return first?.msg ? `${field ? `${field}: ` : ""}${first.msg.replace(/^Value error, /, "")}` : fallback;
+  }
+  return fallback;
+}
 
-// Job APIs (HR)
-export const getJobs = () => fetchApi("/jobs/");
-export const getJob = (id) => fetchApi(`/jobs/${id}`);
-export const getJobRubric = (id) => fetchApi(`/jobs/${id}/rubric`);
-export const updateJobRubric = (id, data) => 
-  fetchApi(`/jobs/${id}/rubric`, { method: "PUT", body: JSON.stringify(data) });
-export const createJob = (data) => 
-  fetchApi("/jobs/", { method: "POST", body: JSON.stringify(data) });
+export async function request(endpoint, { method = "GET", body, form } = {}) {
+  const token = localStorage.getItem("token");
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      method,
+      headers,
+      body: form || (body !== undefined ? JSON.stringify(body) : undefined),
+    });
+  } catch {
+    throw new ApiError("Cannot reach the server. Check your connection and try again.", 0);
+  }
+  if (res.status === 401 && token) {
+    window.dispatchEvent(new Event("jasipa:session-expired"));
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(describe(data.detail, `Request failed (${res.status}).`), res.status);
+  }
+  const type = res.headers.get("content-type") || "";
+  return type.includes("application/json") ? res.json() : res.blob();
+}
 
+const post = (endpoint, body) => request(endpoint, { method: "POST", body });
 
-// Candidate APIs (HR View)
-export const getCandidates = (stage, jd_id) => {
+// Auth
+export const login = (email, password) => post("/auth/login", { email, password });
+export const register = (data) => post("/auth/register", data);
+export const getMe = () => request("/auth/me");
+
+// HR: dashboard, jobs, rubrics, questions
+export const getDashboard = () => request("/dashboard/summary");
+export const getJobs = () => request("/jobs/");
+export const createJob = (data) => post("/jobs/", data);
+export const getJobRubric = (id) => request(`/jobs/${id}/rubric`);
+export const getRubricVersions = (id) => request(`/jobs/${id}/rubrics`);
+export const updateJobRubric = (id, data) => request(`/jobs/${id}/rubric`, { method: "PUT", body: data });
+export const getQuestionSet = (jdId) => request(`/assessments/questions/${jdId}`);
+export const regenerateQuestionSet = (jdId) => post(`/assessments/questions/${jdId}/regenerate`);
+
+// HR: candidates and evaluation
+export const getCandidates = (stage, jdId) => {
   const params = new URLSearchParams();
   if (stage) params.append("stage", stage);
-  if (jd_id) params.append("jd_id", jd_id);
-  const q = params.toString() ? `?${params.toString()}` : "";
-  return fetchApi(`/candidates/${q}`);
+  if (jdId) params.append("jd_id", jdId);
+  const q = params.toString();
+  return request(`/candidates/${q ? `?${q}` : ""}`);
 };
+export const getCandidate = (id) => request(`/candidates/${id}`);
+export const uploadResume = (formData) => request("/candidates/upload-resume", { method: "POST", form: formData });
+export const downloadResume = (id) => request(`/candidates/${id}/resume`);
+export const runScreenResume = (candidate_id) => post("/pipeline/run-screen-resume", { candidate_id });
+export const runFullGraph = (candidate_id) => post("/pipeline/run-full-graph", { candidate_id });
+export const getDecisionStatus = (id) => request(`/reviews/candidate/${id}`);
+export const submitDecision = (data) => post("/reviews/decide", data);
+export const getCohortAnalytics = () => request("/bias/analytics");
 
-export const getCandidate = (id) => fetchApi(`/candidates/${id}`);
-export const createCandidate = (data) => 
-  fetchApi("/candidates/", { method: "POST", body: JSON.stringify(data) });
+// HR: outcomes, audit, administration
+export const recordHiringOutcome = (data) => post("/learning/outcomes", data);
+export const getEligibleOutcomes = () => request("/learning/eligible");
+export const getHiringLearningAnalytics = () => request("/learning/analytics");
+export const getHiringOutcomeHistory = () => request("/learning/history");
+export const getAuditLogs = (candidateId = null, limit = 200) =>
+  request(`/audit/logs?limit=${limit}${candidateId ? `&candidate_id=${encodeURIComponent(candidateId)}` : ""}`);
+export const verifyAuditChain = () => request("/audit/verify");
+export const getMcpTools = () => request("/mcp/tools");
+export const getPanelConfig = () => request("/admin/panel-coordinator-config");
+export const updatePanelConfig = (data) => request("/admin/panel-coordinator-config", { method: "PATCH", body: data });
+export const getStrategyEffectiveness = () => request("/admin/strategy-effectiveness");
+export const getExpertTasks = (status = "PENDING") => request(`/admin/expert-tasks?status=${status}`);
+export const updateExpertTask = (id, data) => request(`/admin/expert-tasks/${id}`, { method: "PATCH", body: data });
 
-export const uploadResume = async (formData) => {
-  const token = localStorage.getItem("token");
-  const headers = token ? { "Authorization": `Bearer ${token}` } : {};
-  const res = await fetch(`${API_BASE}/candidates/upload-resume`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Upload failed" }));
-    throw new Error(err.detail || "Upload failed");
-  }
-  return await res.json();
+// Candidate portal (scoped to the signed-in candidate by the server)
+export const getCandidateProfile = () => request("/candidate/me");
+export const updateCandidateProfile = (data) => request("/candidate/profile", { method: "PUT", body: data });
+export const uploadCandidateResume = (file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return request("/candidate/upload-resume", { method: "POST", form });
 };
-
-// Assessment APIs (HR / Evaluation)
-export const getTechnicalQuestions = (jd_id) => fetchApi(`/assessments/questions/technical/${jd_id}`);
-export const getBehavioralQuestions = (jd_id) => fetchApi(`/assessments/questions/behavioral/${jd_id}`);
-export const submitTechnicalAssessment = (data) => 
-  fetchApi("/assessments/submit/technical", { method: "POST", body: JSON.stringify(data) });
-export const submitBehavioralAssessment = (data) => 
-  fetchApi("/assessments/submit/behavioral", { method: "POST", body: JSON.stringify(data) });
-
-// Pipeline APIs (HR)
-export const runScreenResume = (candidate_id, jd_id) => 
-  fetchApi("/pipeline/run-screen-resume", { method: "POST", body: JSON.stringify({ candidate_id, jd_id }) });
-export const runPanelSynthesis = (candidate_id, jd_id) => 
-  fetchApi("/pipeline/run-panel", { method: "POST", body: JSON.stringify({ candidate_id, jd_id }) });
-export const runFullGraph = (candidate_id, jd_id) => 
-  fetchApi("/pipeline/run-full-graph", { method: "POST", body: JSON.stringify({ candidate_id, jd_id }) });
-
-// Review & Bias APIs (HR)
-export const getPendingReviews = () => fetchApi("/reviews/pending");
-export const submitHumanDecision = (data) => 
-  fetchApi("/reviews/decide", { method: "POST", body: JSON.stringify(data) });
-export const getCohortAnalytics = () => fetchApi("/bias/analytics");
-export const recordHiringOutcome = (data) => fetchApi("/learning/outcomes", { method: "POST", body: JSON.stringify(data) });
-export const getHiringOutcomes = () => fetchApi("/learning/outcomes");
-export const getEligibleOutcomes = () => fetchApi("/learning/eligible");
-export const getHiringLearningAnalytics = () => fetchApi("/learning/analytics");
-export const getHiringOutcomeHistory = () => fetchApi("/learning/history");
-
-// Audit & MCP APIs (HR / System)
-export const getCandidateAuditTrail = (id) => fetchApi(`/audit/candidate/${id}`);
-export const getRecentAuditLogs = (limit = 30) => fetchApi(`/audit/logs?limit=${limit}`);
-export const verifyAuditHashChain = () => fetchApi("/audit/verify");
-export const getMcpTools = () => fetchApi("/mcp/tools");
-export const executeMcpTool = (name, argumentsObj) => 
-  fetchApi("/mcp/execute", { method: "POST", body: JSON.stringify({ name, arguments: argumentsObj }) });
-
-// Candidate Portal APIs (Strict Candidate Data Isolation)
-export const getCandidateProfile = () => fetchApi("/candidate/me");
-export const getCandidateApplications = () => fetchApi("/candidate/applications");
-export const getCandidateJobs = () => fetchApi("/candidate/jobs");
-export const applyCandidateJob = (data) => 
-  fetchApi("/candidate/apply", { method: "POST", body: JSON.stringify(data) });
-export const getCandidateAssessments = () => fetchApi("/candidate/assessments");
-export const submitCandidateTechnical = (data) => 
-  fetchApi("/candidate/submit-technical", { method: "POST", body: JSON.stringify(data) });
-export const submitCandidateBehavioral = (data) => 
-  fetchApi("/candidate/submit-behavioral", { method: "POST", body: JSON.stringify(data) });
-export const getCandidateTimeline = () => fetchApi("/candidate/timeline");
-export const getCandidateExplanation = () => fetchApi("/candidate/explanation");
-export const requestCandidateReReview = () => fetchApi("/candidate/request-re-review", { method: "POST" });
-export const updateCandidateProfile = (data) => 
-  fetchApi("/candidate/profile", { method: "PUT", body: JSON.stringify(data) });
-export const updateHRProfile = (data) => 
-  fetchApi("/auth/profile", { method: "PUT", body: JSON.stringify(data) });
-
-// Candidate self-service resume upload (PDF → parse → update profile)
-export const uploadCandidateResume = async (file) => {
-  const token = localStorage.getItem("token");
-  const headers = token ? { "Authorization": `Bearer ${token}` } : {};
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(`${API_BASE}/candidate/upload-resume`, {
-    method: "POST",
-    headers,
-    body: formData,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: "Upload failed" }));
-    throw new Error(err.detail || "Upload failed");
-  }
-  return await res.json();
-};
-
-// Audit Trail & Cryptographic Verification APIs
-export const getAuditLogs = (candidateId = null, limit = 100) => {
-  const q = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}&limit=${limit}` : `?limit=${limit}`;
-  return fetchApi(`/audit/logs${q}`);
-};
-
-export const verifyAuditChain = () => fetchApi("/audit/verify");
-export const getCandidateAuditTimeline = (candidateId) => fetchApi(`/audit/candidate/${candidateId}`);
-
+export const getCandidateApplications = () => request("/candidate/applications");
+export const getCandidateJobs = () => request("/candidate/jobs");
+export const applyCandidateJob = (jd_id) => post("/candidate/apply", { jd_id });
+export const getCandidateAssessments = () => request("/candidate/assessments");
+export const runSampleTests = (question_id, code) => post("/candidate/assessments/run-code", { question_id, code });
+export const submitCandidateTechnical = (answers) => post("/candidate/submit-technical", { answers });
+export const submitCandidateBehavioral = (answers) => post("/candidate/submit-behavioral", { answers });
+export const getCandidateTimeline = () => request("/candidate/timeline");

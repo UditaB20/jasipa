@@ -1,125 +1,79 @@
-import React, { useState, useEffect } from "react";
-import { Scale, AlertTriangle, CheckCircle2, TrendingUp, BarChart3, Info } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Scale } from "lucide-react";
 import { getCohortAnalytics } from "../services/api";
+import { Alert, BiasBadge, BIAS, Card, EmptyState, ErrorState, PageHeader, PageLoading, Tabs, useAsync } from "../components/ui";
+
+const pct = (v) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
 export default function BiasAnalytics() {
-  const [analytics, setAnalytics] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    loadAnalytics();
-  }, []);
-
-  async function loadAnalytics() {
-    try {
-      const data = await getCohortAnalytics();
-      setAnalytics(data);
-    } catch (err) {
-      console.error("Error loading bias analytics:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const { data, loading, error, reload } = useAsync(getCohortAnalytics, []);
+  const [stage, setStage] = useState("ai_recommendation");
+  if (loading && !data) return <PageLoading />;
+  if (error) return <ErrorState error={error} onRetry={reload} />;
+  const analysis = data[stage];
+  const overallTone = { STATISTICALLY_SUPPORTED_DISPARITY: "danger", POTENTIAL_DISPARITY_INDICATOR: "warning", INSUFFICIENT_DATA: "info", NO_INDICATOR_DETECTED: "success" }[analysis.overall_status];
 
   return (
-    <div style={{ padding: "28px", maxWidth: "1400px", margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-        <div>
-          <h2 style={{ fontSize: "1.4rem", fontWeight: "800", color: "#f8fafc" }}>
-            Bias & Cohort Disparity Analytics
-          </h2>
-          <p style={{ fontSize: "0.85rem", color: "#94a3b8" }}>
-            Evaluates statistical parity and the 4/5ths (80%) disparate impact standard across evaluated candidate cohorts.
-          </p>
-        </div>
+    <div className="page">
+      <PageHeader title="Bias monitor" subtitle="Selection rates by monitoring cohort, at the AI recommendation stage and in final human decisions. Results inform reviewers; they never change scores or decisions." />
 
-        <button onClick={loadAnalytics} className="btn btn-secondary" style={{ padding: "8px 14px" }}>
-          <span>Refresh Metrics</span>
-        </button>
+      <Tabs active={stage} onChange={setStage} tabs={[
+        { id: "ai_recommendation", label: "AI panel recommendations", badge: BIAS[data.ai_recommendation.overall_status]?.label, badgeTone: BIAS[data.ai_recommendation.overall_status]?.tone },
+        { id: "human_decision", label: "Final human decisions", badge: BIAS[data.human_decision.overall_status]?.label, badgeTone: BIAS[data.human_decision.overall_status]?.tone },
+      ]} />
+
+      <div className="mb-16"><Alert tone={overallTone} title={BIAS[analysis.overall_status]?.label}>{analysis.summary}</Alert></div>
+
+      <div className="grid grid-4 mb-16">
+        <div className="card stat"><div className="stat-label">Candidates compared</div><div className="stat-value">{analysis.with_cohort}</div><div className="stat-hint">of {analysis.total_evaluated} evaluated</div></div>
+        <div className={`card stat ${analysis.missing_cohort ? "attention" : ""}`}><div className="stat-label">Cohort not recorded</div><div className="stat-value">{analysis.missing_cohort}</div><div className="stat-hint">Excluded from comparisons</div></div>
+        <div className="card stat"><div className="stat-label">Reference cohort</div><div className="stat-value" style={{ fontSize: 18, marginTop: 12 }}>{analysis.reference_cohort || "None"}</div><div className="stat-hint">Highest rate with n ≥ {analysis.min_group_size}</div></div>
+        <div className="card stat"><div className="stat-label">Screens</div><div className="stat-value" style={{ fontSize: 18, marginTop: 12 }}>ratio {analysis.threshold} · p {analysis.alpha}</div><div className="stat-hint">Four-fifths and Fisher's exact test</div></div>
       </div>
 
-      {/* Summary Alert */}
-      {analytics && (
-        <div
-          style={{
-            padding: "18px 22px",
-            borderRadius: "12px",
-            background: analytics.disparity_detected ? "rgba(244, 63, 94, 0.12)" : "rgba(16, 185, 129, 0.12)",
-            border: analytics.disparity_detected ? "1px solid rgba(244, 63, 94, 0.3)" : "1px solid rgba(16, 185, 129, 0.3)",
-            marginBottom: "24px",
-            display: "flex",
-            alignItems: "center",
-            gap: "14px",
-          }}
-        >
-          {analytics.disparity_detected ? (
-            <AlertTriangle size={24} color="#fb7185" />
-          ) : (
-            <CheckCircle2 size={24} color="#34d399" />
-          )}
-          <div>
-            <h3 style={{ fontSize: "0.95rem", fontWeight: "700", color: analytics.disparity_detected ? "#fb7185" : "#34d399" }}>
-              {analytics.disparity_detected ? "Cohort Disparity Flagged in Talent Pool" : "Statistical Parity Maintained"}
-            </h3>
-            <p style={{ fontSize: "0.8rem", color: "#cbd5e1", marginTop: "2px" }}>
-              {analytics.summary}
-            </p>
+      <Card title="Cohort comparison" subtitle={`Selected = ${analysis.selection_definition}`} pad={false}>
+        {analysis.groups.length === 0 ? <EmptyState icon={Scale} title="No cohort data yet">Rates appear once candidates with a recorded cohort reach this stage.</EmptyState> : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Cohort</th><th className="right">n</th><th className="right">Selected</th><th className="right">Rate (95% interval)</th><th className="right">Impact ratio</th><th className="right">Fisher p</th><th>Result</th></tr></thead>
+              <tbody>
+                {analysis.groups.map((g) => (
+                  <tr key={g.cohort_name}>
+                    <td className="cell-title">{g.cohort_name}</td>
+                    <td className="right num">{g.n}</td>
+                    <td className="right num">{g.selected}</td>
+                    <td className="right num">{pct(g.selection_rate)} <span className="dim xs">({pct(g.ci_low)}–{pct(g.ci_high)})</span></td>
+                    <td className="right num">{g.impact_ratio == null ? "—" : g.impact_ratio.toFixed(2)}</td>
+                    <td className="right num">{g.fisher_p_value == null ? "—" : g.fisher_p_value.toFixed(3)}</td>
+                    <td>
+                      <div className="row wrap"><BiasBadge value={g.status} />{g.unstable_ratio && <span className="badge badge-warning" title="One candidate's outcome would change the four-fifths result"><AlertTriangle size={11} />Fragile</span>}</div>
+                      <div className="xs dim mt-4" style={{ maxWidth: 420 }}>{g.notes[0]}</div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        )}
+      </Card>
 
-      {/* Cohort Cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "20px", marginBottom: "28px" }}>
-        {analytics?.cohorts?.map((c) => (
-          <div key={c.cohort_name} className="glass-card" style={{ padding: "20px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-              <h3 style={{ fontSize: "1rem", fontWeight: "700", color: "#f8fafc" }}>
-                {c.cohort_name}
-              </h3>
-              <span
-                style={{
-                  fontSize: "0.7rem",
-                  fontWeight: "600",
-                  padding: "2px 8px",
-                  borderRadius: "9999px",
-                  background: c.flagged_disparity ? "rgba(244, 63, 94, 0.2)" : "rgba(16, 185, 129, 0.2)",
-                  color: c.flagged_disparity ? "#fb7185" : "#34d399",
-                }}
-              >
-                {c.flagged_disparity ? "Disparity Flagged" : "Parity Cleared"}
-              </span>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginTop: "14px" }}>
-              <div style={{ padding: "10px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)" }}>
-                <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Total Evaluated</div>
-                <div style={{ fontSize: "1.2rem", fontWeight: "800", color: "#f8fafc" }}>{c.total_candidates}</div>
-              </div>
-
-              <div style={{ padding: "10px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)" }}>
-                <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Average Score</div>
-                <div style={{ fontSize: "1.2rem", fontWeight: "800", color: "#38bdf8" }}>{c.average_score}/100</div>
-              </div>
-
-              <div style={{ padding: "10px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)", gridColumn: "span 2" }}>
-                <div style={{ fontSize: "0.72rem", color: "#94a3b8" }}>Recommendation Rate (Proceed)</div>
-                <div style={{ fontSize: "1.2rem", fontWeight: "800", color: c.flagged_disparity ? "#fbbf24" : "#34d399" }}>
-                  {Math.round(c.proceed_rate * 100)}%
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Governance Explanatory Card */}
-      <div className="glass-card" style={{ padding: "22px" }}>
-        <h3 style={{ fontSize: "0.95rem", fontWeight: "700", color: "#f8fafc", marginBottom: "8px" }}>
-          About the 4/5ths Rule (80% Disparate Impact Standard)
-        </h3>
-        <p style={{ fontSize: "0.8rem", color: "#94a3b8", lineHeight: "1.6" }}>
-          In employment governance, the four-fifths rule states that a selection rate for any group which is less than 80% of the selection rate for the highest group is generally regarded as evidence of adverse impact. In JASIPA, detected disparities never reject candidates; instead, they generate explicit audit warnings on candidate evidence dockets to safeguard fair human evaluation.
-        </p>
+      <div className="grid grid-2 mt-16">
+        <Card title="How to read this">
+          <ul className="list">
+            <li><strong>Disparity indicator</strong>: the cohort's rate is below four-fifths of the reference cohort, but the sample is too small for the difference to be statistically significant. Look closer; it is not proof either way.</li>
+            <li><strong>Supported disparity</strong>: below the four-fifths screen and significant under Fisher's exact test. Escalate and review the process.</li>
+            <li><strong>Insufficient data</strong>: fewer than {analysis.min_group_size} candidates in the cohort, or nothing to compare against. This is not evidence of fairness.</li>
+            <li><strong>No indicator</strong>: nothing flagged. With small cohorts, real differences can still go undetected.</li>
+          </ul>
+        </Card>
+        <Card title="Method">
+          <dl className="kv">
+            <dt>Impact ratio</dt><dd className="small">{data.method.impact_ratio}</dd>
+            <dt>Significance</dt><dd className="small">{data.method.significance}</dd>
+            <dt>Interval</dt><dd className="small">{data.method.interval}</dd>
+            <dt>Per-decision checks</dt><dd className="small">{data.bias_checks_recorded} recorded with panel decisions</dd>
+          </dl>
+        </Card>
       </div>
     </div>
   );
