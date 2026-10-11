@@ -14,8 +14,16 @@ from sqlalchemy.orm import Session
 
 from app.database.models import BiasCheck, Candidate, HiringOutcome, HumanReview, PanelDecision
 from app.services.fairness_stats import (
-    SEVERITY, STATUS_INDICATOR, STATUS_INSUFFICIENT, STATUS_NONE, STATUS_SUPPORTED, compare_groups, is_missing_cohort,
+    DISPLAY_STATUS, SEVERITY, STATUS_INDICATOR, STATUS_INSUFFICIENT, STATUS_NONE, STATUS_SUPPORTED, compare_groups,
+    is_missing_cohort, significance_label,
 )
+
+COHORT_DEFINITION = (
+    "A cohort is the monitoring label HR records on a candidate (cohort_tag), entered when the candidate is created or a "
+    "resume is uploaded. It is never inferred from resume content and is never passed to the evaluation agents. "
+    "Candidates without a label (including the legacy default 'General Cohort') are excluded from comparisons and counted "
+    "as missing. Kaggle dataset imports carry no demographic fields, so they have no cohort; their dataset Category is a "
+    "job category, not a cohort.")
 
 
 def _is_test_record(name: str, email: str, cohort: Optional[str]) -> bool:
@@ -69,6 +77,8 @@ def calculate_cohort_analytics(db: Session) -> Dict[str, Any]:
         "overall_status": max((ai["overall_status"], human["overall_status"]), key=lambda s: SEVERITY[s]),
         "bias_checks_recorded": len(checks),
         "bias_checks_by_status": by_status,
+        "cohort_definition": COHORT_DEFINITION,
+        "display_status": DISPLAY_STATUS[max((ai["overall_status"], human["overall_status"]), key=lambda s: SEVERITY[s])],
         "method": {
             "impact_ratio": "Cohort selection rate divided by the highest rate among cohorts with enough candidates (four-fifths screen).",
             "significance": "Two-sided Fisher's exact test of each cohort against all other candidates with a recorded cohort.",
@@ -85,21 +95,31 @@ def _candidate_group(analysis: Dict[str, Any], cohort: Optional[str]) -> Optiona
     return next((group for group in analysis["groups"] if group["cohort_name"] == str(cohort).strip()), None)
 
 
+def _metrics(group: Optional[Dict[str, Any]]) -> str:
+    if not group:
+        return ""
+    ratio = "n/a" if group["impact_ratio"] is None else f"{group['impact_ratio']:.2f}"
+    p = "n/a" if group["fisher_p_value"] is None else f"{group['fisher_p_value']:.3f}"
+    return f"{group['cohort_name']}: n={group['n']}, impact ratio {ratio}, Fisher p {p}"
+
+
 def check_selection_rate(analysis: Dict[str, Any], cohort: Optional[str], check_type: str, label: str) -> Dict[str, Any]:
     group = _candidate_group(analysis, cohort)
     if group is None:
         status = STATUS_INSUFFICIENT
-        reason = (f"{label}: the candidate has no recorded cohort, so their group cannot be compared."
-                  if is_missing_cohort(cohort) else f"{label}: no comparable records for cohort {cohort}.")
+        reason = "Candidate has no recorded cohort." if is_missing_cohort(cohort) else f"No comparable records for cohort {cohort}."
     else:
         status = group["status"] if group["status"] in SEVERITY and group["status"] != "REFERENCE_GROUP" else STATUS_NONE
-        reason = f"{label} — cohort {group['cohort_name']} (n={group['n']}): " + " ".join(group["notes"])
-    # The pool-wide status matters too: other cohorts may be disadvantaged even if this candidate's is not.
-    if SEVERITY[analysis["overall_status"]] > SEVERITY[status] and analysis["overall_status"] in (STATUS_SUPPORTED, STATUS_INDICATOR):
-        reason += f" Pool-wide: {analysis['summary']}"
-        status = analysis["overall_status"]
-    return {"check_type": check_type, "flag_status": status, "reason": reason, "cohort": cohort,
-            "group": group, "pool_status": analysis["overall_status"], "sample_size": group["n"] if group else 0}
+        reason = f"{_metrics(group)}. {group['notes'][0]}"
+    # Other cohorts can be disadvantaged even when this candidate's is not: carry the pool status, stated once.
+    pool = analysis["overall_status"]
+    if SEVERITY[pool] > SEVERITY[status] and pool in (STATUS_SUPPORTED, STATUS_INDICATOR):
+        status = pool
+        reason += f" Pool: {analysis['summary']}"
+    return {"check_type": check_type, "label": label, "flag_status": status, "display_status": DISPLAY_STATUS[status],
+            "significance": significance_label(status), "reason": reason, "cohort": cohort, "group": group,
+            "pool_status": pool, "pool_summary": analysis["summary"], "sample_size": group["n"] if group else 0,
+            "compared_candidates": analysis["with_cohort"], "missing_cohort": analysis["missing_cohort"]}
 
 
 def check_outcome_based_fairness(db: Session, candidate: Optional[Candidate]) -> Dict[str, Any]:
@@ -167,7 +187,7 @@ def comprehensive_bias_check(db: Session, candidate_id: str, decision_id: str) -
     human = human_decision_analysis(db)
     checks = [
         check_decision_language(db, decision),
-        check_selection_rate(ai, cohort, "selection_rate_ai_recommendation", "AI panel recommendations"),
+        check_selection_rate(ai, cohort, "selection_rate_ai_recommendation", "AI recommendations"),
         check_selection_rate(human, cohort, "selection_rate_human_decision", "Final human decisions"),
         check_outcome_based_fairness(db, candidate),
         check_threshold_bias(db),
@@ -176,15 +196,16 @@ def comprehensive_bias_check(db: Session, candidate_id: str, decision_id: str) -
     supported = [c for c in checks if c["flag_status"] == STATUS_SUPPORTED]
     indicators = [c for c in checks if c["flag_status"] == STATUS_INDICATOR]
     insufficient = [c for c in checks if c["flag_status"] == STATUS_INSUFFICIENT]
-    if supported:
-        reason = " ".join(c["reason"] for c in supported)
-    elif indicators:
-        reason = " ".join(c["reason"] for c in indicators)
-    elif insufficient:
-        reason = (f"{len(insufficient)} of {len(checks)} checks lack enough data for a reliable comparison; "
-                  "this is not evidence that the process is fair. Remaining checks found no indicators.")
-    else:
-        reason = "No disparity indicators were found. Small samples limit how much this rules out."
+    label = lambda c: c.get("label") or c["check_type"].replace("_", " ")
+    parts = []
+    if supported or indicators:
+        parts.append("Screening criterion triggered: " + "; ".join(
+            f"{label(c)} ({c.get('significance') or 'see detail'})" for c in supported + indicators) + ".")
+    if insufficient:
+        parts.append("Insufficient data: " + ", ".join(label(c) for c in insufficient) + ".")
+    if not parts:
+        parts.append("No indicator detected in any check.")
+    reason = " ".join(parts)
 
     recommendations = []
     if supported:
@@ -199,6 +220,7 @@ def comprehensive_bias_check(db: Session, candidate_id: str, decision_id: str) -
     sample = max((c.get("sample_size") or 0 for c in checks), default=0)
     confidence = "low" if sample < 10 else "medium" if sample < 30 else "high"
     return {"candidate_id": candidate_id, "decision_id": decision_id, "flag_status": overall, "reason": reason,
+            "display_status": DISPLAY_STATUS[overall], "cohort_definition": COHORT_DEFINITION,
             "checks": checks, "overall_flag": overall in (STATUS_SUPPORTED, STATUS_INDICATOR),
             "recommendations": recommendations, "confidence_level": confidence, "sample_size": sample,
             "action_required": overall != STATUS_NONE, "requires_human_review": True,

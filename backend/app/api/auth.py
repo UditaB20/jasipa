@@ -76,7 +76,8 @@ def register_candidate(req: RegisterRequest, db: Session = Depends(get_db)):
     if req.email in HR_USERS or db.query(Candidate).filter(Candidate.email == req.email).first():
         raise HTTPException(status_code=409, detail="An account with this email already exists. Sign in instead.")
     cand = Candidate(name=req.name, email=req.email, password_hash=hash_password(req.password),
-                     current_stage="REGISTERED", skills_extracted=[], resume_profile={})
+                     current_stage="REGISTERED", skills_extracted=[], resume_profile={},
+                     source="candidate_portal")
     db.add(cand)
     db.commit()
     db.refresh(cand)

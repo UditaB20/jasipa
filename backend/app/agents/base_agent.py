@@ -50,7 +50,8 @@ class LLMStrategy(EvaluationStrategy):
 def mentions(text: str, term: str) -> bool:
     """Word-bounded, case-insensitive match that also works for terms like C++, C# and Node.js."""
     term = str(term or "").lower().strip()
-    return bool(term) and re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text) is not None
+    # '+' and '#' count as part of a token so that "C" does not match inside "C++" or "C#".
+    return bool(term) and re.search(r"(?<![a-z0-9+#])" + re.escape(term) + r"(?![a-z0-9+#])", text) is not None
 
 
 class RegexStrategy(EvaluationStrategy):

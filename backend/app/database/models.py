@@ -19,6 +19,10 @@ class Candidate(Base):
     # Self-reported/HR-recorded cohort used only for aggregate bias monitoring; None means not recorded.
     cohort_tag = Column(String, nullable=True, default=None)
     password_hash = Column(String, nullable=True)  # Only set for candidates with a portal account
+    # Where the record came from: dataset_import (Kaggle Resume Dataset), candidate_portal, hr_upload, hr_entry.
+    source = Column(String, nullable=True, default="hr_entry", index=True)
+    external_id = Column(String, nullable=True, index=True)  # Kaggle row ID for dataset imports
+    dataset_category = Column(String, nullable=True)  # Kaggle "Category" label (job category, not a demographic cohort)
     resume_text = Column(Text, nullable=True)
     resume_file_path = Column(String, nullable=True)  # Server-side storage key; never exposed to clients
     resume_original_filename = Column(String, nullable=True)
@@ -37,6 +41,17 @@ class Candidate(Base):
     ) # APPLIED, RESUME_SCREENED, TECHNICAL_ASSESSED, BEHAVIORAL_ASSESSED, PANEL_EVALUATED, HUMAN_REVIEW_PENDING, INFO_REQUESTED, DECIDED
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def resume_sections(self):
+        """Resume text split at recognised headings, in document order (for display)."""
+        from app.services.resume_parser import ordered_sections
+        return ordered_sections(self.resume_text or "")
+
+    @property
+    def has_original_file(self) -> bool:
+        from app.services.resume_service import resume_file_path
+        return resume_file_path(self) is not None
 
     # Relationships (ordered oldest -> newest; PKs are UUIDs so insertion order is NOT implied)
     job_description = relationship("JobDescription", back_populates="candidates")

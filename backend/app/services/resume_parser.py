@@ -8,6 +8,7 @@ import hashlib
 import io
 import re
 import zipfile
+from html.parser import HTMLParser
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -34,11 +35,21 @@ SKILL_TAXONOMY = [
 ]
 
 _SECTION_HEADINGS = {
-    "education": ("education", "academic background", "qualifications", "academics"),
-    "experience": ("experience", "work experience", "professional experience", "employment history", "work history"),
+    "summary": ("summary", "professional summary", "profile", "professional profile", "objective", "career objective",
+                "about me", "executive profile", "career overview", "executive summary", "overview"),
+    "education": ("education", "academic background", "qualifications", "academics", "education and training",
+                  "educational background"),
+    "experience": ("experience", "work experience", "professional experience", "employment history", "work history",
+                   "relevant experience", "career history"),
     "projects": ("projects", "personal projects", "academic projects", "key projects", "selected projects"),
-    "skills": ("skills", "technical skills", "core competencies", "competencies"),
+    "skills": ("skills", "technical skills", "core competencies", "competencies", "core qualifications", "highlights",
+               "skill highlights", "key skills", "areas of expertise", "technical proficiencies"),
+    "certifications": ("certifications", "certificates", "licenses", "licenses and certifications", "certifications and licenses"),
+    "accomplishments": ("accomplishments", "achievements", "awards", "honors", "awards and honors"),
+    "additional": ("additional information", "interests", "languages", "volunteer experience", "affiliations",
+                   "professional affiliations", "publications", "activities"),
 }
+_HEADING_LOOKUP = {name: key for key, names in _SECTION_HEADINGS.items() for name in names}
 _DEGREE_PATTERN = re.compile(
     r"\b(ph\.?\s?d|doctorate|master'?s?|m\.?\s?sc|m\.?\s?tech|m\.?\s?s\.|mba|m\.?\s?e\.|bachelor'?s?|b\.?\s?sc|"
     r"b\.?\s?tech|b\.?\s?e\.|b\.?\s?s\.|b\.?\s?a\.|associate'?s?|diploma)\b", re.IGNORECASE)
@@ -126,6 +137,81 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> Dict[str, Any]:
         return {"success": False, "text": "", "confidence": 0.0, "status": "MANUAL_REVIEW_REQUIRED", "message": str(exc)}
 
 
+def _heading_key(line: str) -> Optional[str]:
+    heading = re.sub(r"[:\s]+$", "", line.strip(" •·-*\t")).lower()
+    return _HEADING_LOOKUP.get(heading) if len(heading) <= 40 else None
+
+
+def ordered_sections(text: str) -> List[Dict[str, Any]]:
+    """Resume content in document order, split at recognised section headings, for readable display."""
+    sections: List[Dict[str, Any]] = []
+    current = {"title": None, "key": "header", "lines": []}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        key = _heading_key(line)
+        if key:
+            if current["lines"] or current["title"]:
+                sections.append(current)
+            current = {"title": re.sub(r"[:\s]+$", "", line.strip(" •·-*\t")), "key": key, "lines": []}
+        else:
+            current["lines"].append(line.strip(" \t"))
+    if current["lines"] or current["title"]:
+        sections.append(current)
+    return [s for s in sections if s["lines"]][:40]
+
+
+class _ResumeHTMLToText(HTMLParser):
+    """Rebuilds line and section structure from the Kaggle dataset's Resume_html column."""
+    BLOCK = {"div", "p", "li", "tr", "br", "h1", "h2", "h3", "h4", "table", "ul"}
+
+    def __init__(self):
+        super().__init__()
+        self.lines: List[str] = []
+        self.buffer: List[str] = []
+        self.in_title = 0
+        self.depth_stack: List[bool] = []
+
+    def flush(self):
+        text = re.sub(r"\s+", " ", "".join(self.buffer)).strip()
+        self.buffer = []
+        if text:
+            self.lines.append(text)
+
+    def handle_starttag(self, tag, attrs):
+        classes = dict(attrs).get("class") or ""
+        if tag in self.BLOCK:
+            self.flush()
+        if tag == "div":
+            is_title = "sectiontitle" in classes.split()
+            self.depth_stack.append(is_title)
+            if is_title:
+                self.in_title += 1
+                self.lines.append("")
+        if tag == "li":
+            self.buffer.append("• ")
+
+    def handle_endtag(self, tag):
+        if tag in self.BLOCK:
+            self.flush()
+        if tag == "div" and self.depth_stack:
+            if self.depth_stack.pop():
+                self.in_title -= 1
+
+    def handle_data(self, data):
+        self.buffer.append(data)
+
+
+def html_resume_to_text(html: str) -> str:
+    parser = _ResumeHTMLToText()
+    parser.feed(html or "")
+    parser.flush()
+    lines = [line for line in parser.lines if line != "•"]
+    text = "\n".join(lines)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def _split_sections(text: str) -> Dict[str, List[str]]:
     sections: Dict[str, List[str]] = {"_preamble": []}
     current = "_preamble"
@@ -133,9 +219,8 @@ def _split_sections(text: str) -> Dict[str, List[str]]:
         line = raw.strip(" •·-*\t")
         if not line:
             continue
-        heading = line.lower().rstrip(":").strip()
-        matched = next((key for key, names in _SECTION_HEADINGS.items() if heading in names), None)
-        if matched and len(line) <= 40:
+        matched = _heading_key(line)
+        if matched:
             current = matched
             sections.setdefault(current, [])
             continue
@@ -155,7 +240,7 @@ def find_skills(text: str, extra_skills: Iterable[str] = ()) -> List[str]:
         # Single letters (C, R) are too ambiguous to match outside an explicit skills list.
         if len(key) == 1:
             continue
-        if re.search(r"(?<![a-z0-9])" + re.escape(key) + r"(?![a-z0-9])", lowered):
+        if re.search(r"(?<![a-z0-9+#])" + re.escape(key) + r"(?![a-z0-9+#])", lowered):
             found.append(skill)
             seen.add(key)
     return found
@@ -220,6 +305,7 @@ def extract_structured_profile(text: str, extra_skills: Iterable[str] = ()) -> D
         "experience_source": experience_source,
         "experience_entries": roles[:10],
         "projects": projects,
+        "sections": ordered_sections(text),
     }
 
 

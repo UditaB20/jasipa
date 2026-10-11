@@ -110,7 +110,33 @@ class TemplateQuestionStrategy(EvaluationStrategy):
         return {"success": True, "data": build_template_questions(jd, criteria)}
 
 
-def build_template_questions(jd: Dict[str, Any], criteria: Dict[str, Any]) -> Dict[str, Any]:
+SCENARIO_TEMPLATES = [
+    "As {title}, you will {duty}. Describe how you would apply {skill} to this work: the approach you would take, "
+    "the main trade-offs or risks, and how you would check that the result is correct.",
+    "You join as {title} and are asked to {duty}. Walk through how you would use {skill}: your first steps, the decisions "
+    "you would need to make, what could go wrong, and how you would know the work is done well.",
+    "A stakeholder asks you, as {title}, to {duty} on a tight deadline. Explain how {skill} shapes your plan, which "
+    "corners you would refuse to cut and why, and how you would verify the outcome.",
+]
+BEHAVIORAL_TEMPLATES = [
+    "Tell us about a specific time you demonstrated {competency} in work similar to {title}. "
+    "Describe the situation, your task, the actions you personally took, and the result.",
+    "Describe a recent situation where {competency} made the difference to an outcome. What was at stake, what did you "
+    "personally do, and what happened as a result?",
+    "Think of a time when your {competency} was tested under pressure. Explain the context, your responsibility, the steps "
+    "you took, and the measurable result.",
+]
+
+
+def _rotate(items: List[Any], offset: int) -> List[Any]:
+    if not items:
+        return items
+    offset %= len(items)
+    return items[offset:] + items[:offset]
+
+
+def build_template_questions(jd: Dict[str, Any], criteria: Dict[str, Any], variant: int = 0) -> Dict[str, Any]:
+    """Deterministic for a given variant; regeneration asks for the next variant to obtain different questions."""
     required = [s for s in (jd.get("required_skills") or []) if s]
     preferred = [s for s in (jd.get("preferred_skills") or []) if s]
     evaluated = ((criteria or {}).get("technical_scoring") or {}).get("skills_evaluated") or required
@@ -121,12 +147,13 @@ def build_template_questions(jd: Dict[str, Any], criteria: Dict[str, Any]) -> Di
 
     # 1. MCQs for skills with curated items at or below the role's proficiency level.
     used_keys = set()
-    for skill in list(evaluated) + preferred:
+    bank_skills = [s for s in list(evaluated) + preferred if _bank_key(s)]
+    for skill in _rotate(bank_skills, variant):
         key = _bank_key(skill)
-        if not key or key in used_keys:
+        if key in used_keys:
             continue
         items = sorted(MCQ_BANK[key], key=lambda item: abs(_level_rank(item["level"]) - _level_rank(level)))
-        item = items[0]
+        item = items[(variant // max(1, len(bank_skills))) % len(items)]
         used_keys.add(key)
         technical.append({"type": "mcq", "competency_or_skill": skill, "proficiency": item["level"],
                           "prompt": item["prompt"], "options": item["options"],
@@ -138,18 +165,19 @@ def build_template_questions(jd: Dict[str, Any], criteria: Dict[str, Any]) -> Di
     if {s.lower() for s in required} & CODING_SKILLS:
         domain = _role_domain(required + preferred)
         candidates = [c for c in CODING_BANK if domain in c["domains"]] or [c for c in CODING_BANK if "general" in c["domains"]]
-        challenge = min(candidates, key=lambda c: (abs(_level_rank(c["level"]) - _level_rank(level)), c["key"]))
+        ranked = sorted(candidates, key=lambda c: (abs(_level_rank(c["level"]) - _level_rank(level)), c["key"]))
+        challenge = ranked[variant % len(ranked)]
         technical.append(_coding_question(challenge))
 
     # 3. Scenario questions for required skills not otherwise assessed, anchored to JD responsibilities.
     covered = {q["competency_or_skill"].lower() for q in technical}
     open_skills = [s for s in evaluated if s.lower() not in covered] or required[:1] or ["the core skills of the role"]
-    for index, skill in enumerate(open_skills[:2]):
-        duty = _duty_for(skill, duties, index)
+    template = SCENARIO_TEMPLATES[variant % len(SCENARIO_TEMPLATES)]
+    for index, skill in enumerate(_rotate(open_skills, variant)[:2]):
+        duty = _duty_for(skill, duties, index + variant)
         technical.append({
             "type": "scenario", "competency_or_skill": skill, "proficiency": level,
-            "prompt": (f"As {title}, you will {duty}. Describe how you would apply {skill} to this work: the approach you would take, "
-                       f"the main trade-offs or risks, and how you would check that the result is correct."),
+            "prompt": template.format(title=title, duty=duty, skill=skill),
             "rubric_guideline": (f"Strong answers apply {skill} concretely to: {duty}. Expected elements: a stepwise approach, "
                                  f"named tools or techniques for {skill}, at least one trade-off or risk, and a validation or quality check. "
                                  f"Depth expected: {level}."),
@@ -161,8 +189,7 @@ def build_template_questions(jd: Dict[str, Any], criteria: Dict[str, Any]) -> Di
         description = competency.get("description") or ""
         behavioral.append({
             "type": "behavioral", "competency_or_skill": name, "proficiency": level,
-            "prompt": (f"Tell us about a specific time you demonstrated {name.lower()} in work similar to {title}. "
-                       f"Describe the situation, your task, the actions you personally took, and the result."),
+            "prompt": BEHAVIORAL_TEMPLATES[variant % len(BEHAVIORAL_TEMPLATES)].format(competency=name.lower(), title=title),
             "rubric_guideline": (f"STAR anchors for {name}: {description} Score the specificity of the Situation and Task, "
                                  "the candidate's own Actions, and a concrete, preferably measurable Result."),
             "max_points": competency.get("max_points"),
@@ -250,8 +277,8 @@ class QuestionGenerationAgent:
 
     @staticmethod
     def generate(jd_data: Dict[str, Any], rubric_criteria: Dict[str, Any], candidate_id: Optional[str] = None,
-                 use_llm: bool = True) -> Dict[str, Any]:
-        template = build_template_questions(jd_data, rubric_criteria)
+                 use_llm: bool = True, variant: int = 0, avoid_prompts: Optional[List[str]] = None) -> Dict[str, Any]:
+        template = build_template_questions(jd_data, rubric_criteria, variant)
         notes: List[str] = []
         generator = "template"
         technical, behavioral = template["technical_questions"], template["behavioral_questions"]
@@ -266,6 +293,7 @@ class QuestionGenerationAgent:
                 "proficiency_level": proficiency_for(jd_data.get("min_experience")),
                 "rubric_technical_skills": ((rubric_criteria or {}).get("technical_scoring") or {}).get("skills_evaluated"),
                 "rubric_behavioral_competencies": competencies,
+                "do_not_repeat_these_questions": (avoid_prompts or [])[:12],
             })
             chain = StrategyChain([("llm", LLMStrategy()), ("template", TemplateQuestionStrategy())],
                                   agent_name="QuestionGenerationAgent", candidate_id=candidate_id)
@@ -300,8 +328,22 @@ def _content_hash(jd: JobDescription, rubric: Rubric) -> str:
     return hashlib.sha256(json.dumps(material, sort_keys=True, default=str).encode()).hexdigest()
 
 
+class QuestionRegenerationError(RuntimeError):
+    """Raised when regeneration cannot produce a question set that differs from the current one."""
+
+
+def question_fingerprint(technical: List[Dict[str, Any]], behavioral: List[Dict[str, Any]]) -> str:
+    material = [(q.get("type"), q.get("competency_or_skill"), q.get("prompt")) for q in list(technical) + list(behavioral)]
+    return hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+
+
 def get_or_create_question_set(db: Session, jd: JobDescription, rubric: Rubric, force_new: bool = False) -> QuestionSet:
-    """Returns the cached question set for this JD + rubric version, generating it once if needed."""
+    """Returns the cached question set for this JD + rubric version, generating it once if needed.
+
+    With force_new (regeneration) a new set is generated with the next template variant and, when an LLM is
+    configured, an instruction not to repeat the current questions. The new set is only saved if it differs
+    from the current one; otherwise QuestionRegenerationError is raised so callers never report a false success.
+    """
     digest = _content_hash(jd, rubric)
     with _generation_lock:
         existing = (db.query(QuestionSet)
@@ -313,7 +355,18 @@ def get_or_create_question_set(db: Session, jd: JobDescription, rubric: Rubric, 
         jd_data = {"jd_id": jd.jd_id, "title": jd.title, "department": jd.department, "description": jd.description,
                    "required_skills": jd.required_skills or [], "preferred_skills": jd.preferred_skills or [],
                    "min_experience": jd.min_experience}
-        generated = QuestionGenerationAgent.generate(jd_data, rubric.criteria or {})
+        previous_fp = question_fingerprint(existing.technical_questions or [], existing.behavioral_questions or []) if existing else None
+        avoid = [q.get("prompt", "") for q in (existing.technical_questions or [])] if existing else []
+        start_variant = db.query(QuestionSet).filter(QuestionSet.jd_id == jd.jd_id,
+                                                    QuestionSet.rubric_version == rubric.version).count()
+        generated = None
+        for variant in range(start_variant, start_variant + 6):
+            candidate = QuestionGenerationAgent.generate(jd_data, rubric.criteria or {}, variant=variant, avoid_prompts=avoid)
+            if question_fingerprint(candidate["technical_questions"], candidate["behavioral_questions"]) != previous_fp:
+                generated = candidate
+                break
+        if generated is None:
+            raise QuestionRegenerationError("No different questions could be generated for this job's current skills and rubric.")
         question_set = QuestionSet(jd_id=jd.jd_id, rubric_version=rubric.version, content_hash=digest,
                                    generator=generated["generator"], technical_questions=generated["technical_questions"],
                                    behavioral_questions=generated["behavioral_questions"], generation_notes=generated["notes"])

@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,7 @@ from app.services.audit_service import log_event
 from app.services.code_sandbox import candidate_view, run_python_tests
 from app.services.pipeline_service import screen_candidate
 from app.services.resume_parser import ResumeFileError
-from app.services.resume_service import ingest_resume
+from app.services.resume_service import ingest_resume, resume_file_path
 
 router = APIRouter(prefix="/candidate", tags=["Candidate Portal"])
 
@@ -58,6 +59,7 @@ def _profile(cand: Candidate) -> dict:
         "education": cand.education, "experience_years": cand.experience_years,
         "skills_extracted": cand.skills_extracted or [], "resume_profile": cand.resume_profile or {},
         "resume_filename": cand.resume_original_filename, "has_resume": bool(cand.resume_text),
+        "has_original_file": resume_file_path(cand) is not None,
         "target_jd_id": cand.target_jd_id, "current_stage": cand.current_stage,
         "created_at": cand.created_at.isoformat() if cand.created_at else None,
     }
@@ -109,6 +111,17 @@ async def upload_my_resume(file: UploadFile = File(...), auth_user: dict = Depen
     if cand.target_jd_id and cand.current_stage in ("APPLIED", "RESUME_SCREENED", "TECHNICAL_ASSESSED", "BEHAVIORAL_ASSESSED"):
         screen_candidate(db, cand, actor="candidate")
     return {"profile": _profile(cand), "parse_status": parsed["status"]}
+
+
+@router.get("/resume")
+def download_my_resume(auth_user: dict = Depends(require_candidate), db: Session = Depends(get_db)):
+    """The original file the candidate uploaded, exactly as received."""
+    cand = _me(db, auth_user)
+    path = resume_file_path(cand)
+    if not path:
+        raise HTTPException(status_code=404, detail="No uploaded resume file is stored for your profile.")
+    media = "application/pdf" if path.endswith(".pdf") else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    return FileResponse(path, media_type=media, filename=cand.resume_original_filename or f"resume.{path.rsplit('.', 1)[-1]}")
 
 
 @router.get("/applications")

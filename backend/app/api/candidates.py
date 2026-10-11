@@ -52,7 +52,7 @@ def create_candidate(payload: CandidateCreate, current_user: dict = Depends(requ
         skills_extracted=(meta["skills"] if meta else []), resume_profile=(meta["profile"] if meta else {}),
         experience_years=payload.experience_years or (meta["experience_years"] if meta else 0.0),
         education=payload.education or (meta["education"] if meta else None),
-        target_jd_id=_valid_jd(db, payload.target_jd_id), current_stage="APPLIED")
+        target_jd_id=_valid_jd(db, payload.target_jd_id), current_stage="APPLIED", source="hr_entry")
     db.add(candidate)
     db.commit()
     db.refresh(candidate)
@@ -80,11 +80,14 @@ async def upload_candidate_resume(
     target_jd_id = _valid_jd(db, target_jd_id)
     candidate = db.query(Candidate).filter(Candidate.email == email).first()
     created = candidate is None
+    if candidate and candidate.source == "dataset_import":
+        raise HTTPException(status_code=409, detail="This email belongs to an imported dataset record; dataset resumes are not replaced by uploads.")
     if candidate and candidate.current_stage in LOCKED_STAGES:
         raise HTTPException(status_code=409, detail="This candidate is already under panel review; their resume can no longer be replaced.")
     if created:
         candidate = Candidate(name=" ".join(name.split()), email=email, phone=phone, cohort_tag=_clean_cohort(cohort_tag),
-                              target_jd_id=target_jd_id, current_stage="APPLIED", skills_extracted=[], resume_profile={})
+                              target_jd_id=target_jd_id, current_stage="APPLIED", skills_extracted=[], resume_profile={},
+                              source="hr_upload")
         db.add(candidate)
     else:
         candidate.name = " ".join(name.split())

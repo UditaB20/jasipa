@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.agents.question_generator import get_or_create_question_set
+from app.agents.question_generator import QuestionRegenerationError, get_or_create_question_set
 from app.auth.security import require_hr
 from app.database.models import Assessment, JobDescription
 from app.database.session import get_db
@@ -44,13 +44,24 @@ def regenerate_question_set(jd_id: str, current_user: dict = Depends(require_hr)
     """Generates a fresh set for future applicants. Submitted assessments keep the questions they were given."""
     jd = _jd(db, jd_id)
     rubric = get_or_create_rubric(db, jd)
-    question_set = get_or_create_question_set(db, jd, rubric, force_new=True)
+    previous = get_or_create_question_set(db, jd, rubric)
+    try:
+        question_set = get_or_create_question_set(db, jd, rubric, force_new=True)
+    except QuestionRegenerationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # LLM/network/validation failures must surface instead of looking like success
+        raise HTTPException(status_code=502, detail=f"Assessment generation failed: {type(exc).__name__}. The current assessment was kept.")
+    old_prompts = {q.get("prompt") for q in (previous.technical_questions or []) + (previous.behavioral_questions or [])}
+    new_questions = (question_set.technical_questions or []) + (question_set.behavioral_questions or [])
+    changed = sum(1 for q in new_questions if q.get("prompt") not in old_prompts)
     log_event(db, stage="QUESTIONS_GENERATED", event=f"Assessment regenerated for {jd.title}", agent="QuestionGenerationAgent",
               input_reference={"jd_id": jd.jd_id, "rubric_version": rubric.version, "requested_by": current_user["email"]},
-              output={"question_set_id": question_set.question_set_id, "generator": question_set.generator,
+              output={"question_set_id": question_set.question_set_id, "previous_question_set_id": previous.question_set_id,
+                      "changed_questions": changed, "generator": question_set.generator,
                       "technical": len(question_set.technical_questions or []), "behavioral": len(question_set.behavioral_questions or [])},
               rubric_version=rubric.version, model_name=question_set.generator)
-    return _question_set_payload(question_set, rubric)
+    return {**_question_set_payload(question_set, rubric), "previous_question_set_id": previous.question_set_id,
+            "changed_questions": changed, "total_questions": len(new_questions)}
 
 
 @router.get("/candidate/{candidate_id}", response_model=List[AssessmentResponse])

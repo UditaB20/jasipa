@@ -38,6 +38,9 @@ class CandidateResponse(CandidateBase):
     current_stage: str
     skills_extracted: List[str] = []
     resume_original_filename: Optional[str] = None
+    source: Optional[str] = None
+    external_id: Optional[str] = None
+    dataset_category: Optional[str] = None
     resume_profile: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
@@ -47,6 +50,8 @@ class CandidateResponse(CandidateBase):
 
 class CandidateDetailResponse(CandidateResponse):
     resume_text: Optional[str] = None
+    resume_sections: List[Dict[str, Any]] = []
+    has_original_file: bool = False
     screening_results: List[ScreeningResultResponse] = []
     assessments: List[AssessmentResponse] = []
     panel_decisions: List[PanelDecisionResponse] = []

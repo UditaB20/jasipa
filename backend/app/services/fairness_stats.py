@@ -15,6 +15,18 @@ STATUS_INDICATOR = "POTENTIAL_DISPARITY_INDICATOR"
 STATUS_INSUFFICIENT = "INSUFFICIENT_DATA"
 STATUS_NONE = "NO_INDICATOR_DETECTED"
 STATUS_REFERENCE = "REFERENCE_GROUP"
+
+# Three-state presentation used in the UI and reports. A disparity is only "detected" when the defined
+# screening criterion (impact ratio below the four-fifths threshold, with enough data) is triggered;
+# significance is reported separately as a qualifier.
+DISPLAY_STATUS = {
+    STATUS_SUPPORTED: "DISPARITY_DETECTED", STATUS_INDICATOR: "DISPARITY_DETECTED",
+    STATUS_INSUFFICIENT: "INSUFFICIENT_DATA", STATUS_NONE: "NO_INDICATOR_DETECTED", STATUS_REFERENCE: "NO_INDICATOR_DETECTED",
+}
+
+
+def significance_label(status: str) -> Optional[str]:
+    return {STATUS_SUPPORTED: "statistically significant", STATUS_INDICATOR: "not statistically significant"}.get(status)
 SEVERITY = {STATUS_SUPPORTED: 3, STATUS_INDICATOR: 2, STATUS_INSUFFICIENT: 1, STATUS_NONE: 0, STATUS_REFERENCE: 0}
 
 MISSING_COHORT_VALUES = {"", "general cohort", "unspecified", "unknown", "not recorded", "n/a", "none"}
@@ -108,13 +120,11 @@ def compare_groups(records: Iterable[Tuple[Optional[str], bool]], selection_labe
                 status = STATUS_INDICATOR
                 notes.append(f"Impact ratio {ratio:.2f} is below the {threshold:.2f} screen, but the difference is not statistically "
                              f"significant at this sample size (Fisher p={p_value:.3f}). This is not evidence that no disparity exists.")
-            elif significant and rate < (rest_selected / rest_n if rest_n else rate):
-                status = STATUS_INDICATOR
-                notes.append(f"Selection rate is significantly lower than other cohorts (Fisher p={p_value:.3f}) "
-                             f"although the impact ratio {ratio:.2f} passes the four-fifths screen.")
             else:
                 status = STATUS_NONE
-                notes.append("No disparity indicator observed.")
+                notes.append("Four-fifths screen not triggered.")
+                if significant:
+                    notes.append(f"Rates differ significantly (Fisher p={p_value:.3f}), but a rate difference alone is not treated as disparity.")
                 if n < 30:
                     notes.append("With fewer than 30 candidates a real disparity could still go undetected.")
             # Fragility: would one candidate's outcome flip the four-fifths result?
@@ -130,6 +140,7 @@ def compare_groups(records: Iterable[Tuple[Optional[str], bool]], selection_labe
                 notes.append("Few selections in the comparison; the ratio can swing widely.")
 
         groups.append({"cohort_name": name, "n": n, "selected": selected, "selection_rate": round(rate, 3),
+                       "display_status": DISPLAY_STATUS[status], "significance": significance_label(status),
                        "ci_low": low, "ci_high": high, "impact_ratio": round(ratio, 3) if ratio is not None else None,
                        "fisher_p_value": round(p_value, 4) if p_value is not None else None,
                        "status": status, "unstable_ratio": unstable, "notes": notes})
@@ -143,14 +154,16 @@ def compare_groups(records: Iterable[Tuple[Optional[str], bool]], selection_labe
         overall = STATUS_INSUFFICIENT
 
     missing_share = missing / total if total else 0.0
+    flagged = [g["cohort_name"] for g in groups if g["status"] in (STATUS_SUPPORTED, STATUS_INDICATOR)]
     summary = {
-        STATUS_SUPPORTED: "At least one cohort shows a statistically supported disparity in selection rates.",
-        STATUS_INDICATOR: "At least one cohort shows a potential disparity indicator that is not statistically supported at the current sample size.",
-        STATUS_INSUFFICIENT: "There is not enough cohort data for a reliable comparison. This is not evidence that the process is fair.",
-        STATUS_NONE: "No disparity indicators were observed among the compared cohorts. Small samples limit how much this rules out.",
+        STATUS_SUPPORTED: f"Disparity detected for {', '.join(flagged)}: impact ratio below {threshold:.2f} and statistically significant.",
+        STATUS_INDICATOR: f"Disparity detected for {', '.join(flagged)}: impact ratio below {threshold:.2f}, not statistically significant at this sample size.",
+        STATUS_INSUFFICIENT: "Insufficient data for a reliable comparison. This is not evidence that the process is fair.",
+        STATUS_NONE: "No indicator detected among compared cohorts. Small samples limit how much this rules out.",
     }[overall]
     if missing_share > 0.2:
         summary += f" Cohort data is missing for {missing_share:.0%} of candidates, so results may not represent the full pool."
     return {"selection_definition": selection_label, "total_evaluated": total, "with_cohort": known_n,
             "missing_cohort": missing, "reference_cohort": reference, "threshold": threshold, "alpha": alpha,
-            "min_group_size": minimum, "groups": groups, "overall_status": overall, "summary": summary}
+            "min_group_size": minimum, "groups": groups, "overall_status": overall,
+            "display_status": DISPLAY_STATUS[overall], "significance": significance_label(overall), "summary": summary}
