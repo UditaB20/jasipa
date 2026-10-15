@@ -102,16 +102,6 @@ cd frontend && npm run test:e2e        # needs: npx playwright install chromium
 
 `run_all_tests.py` writes the executed test-case table (`TEST_CASES.md`, `test_cases.csv`, `summary.json`) from the runners' result files. The backend suite runs against an isolated, freshly seeded SQLite database and covers authentication and data isolation, sandbox correctness and escape attempts, question generation and validation, resume parsing and upload errors, small-cohort statistics, the end-to-end pipeline, two-reviewer decisions, MCP, and audit-chain tamper detection.
 
-## Known limitations
-
-* The subprocess sandbox is defense in depth, not a hardened security boundary; use `SANDBOX_BACKEND=docker` in production. Coding challenges are Python only.
-* HR accounts are a fixed demo list in code; there is no user management, password reset, SSO or login rate limiting.
-* Without an LLM, open-ended answers are scored with a keyword rubric and STAR-structure detection, which are coarse proxies for answer quality.
-* Agents do not learn from decisions or outcomes (see docs/ENGINEERING_NOTES.md §2).
-* Cohort tags are supplied by HR; the Kaggle dataset has none; there is no voluntary self-identification flow. Bias statistics are only as good as that data.
-* Scanned (image-only) resumes are rejected rather than OCR'd.
-* Schema changes are applied by an additive migration (new nullable columns); there is no Alembic history.
-
 ## Project deliverables
 
 * Report: [docs/report/main.pdf](docs/report/main.pdf) (LaTeX sources in `docs/report`, built with `tectonic -X compile main.tex`)
