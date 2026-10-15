@@ -1,0 +1,34 @@
+\begin{tikzpicture}[node distance=5mm and 7mm]
+\node[title] (t1) {Frontend (React 19 + Vite)};
+\node[box, below=2mm of t1, text width=26mm] (hr) {HR workspace\\\scriptsize Dashboard, Candidates,\\ Jobs, Bias, Audit};
+\node[box, right=of hr, text width=26mm] (cp) {Candidate portal\\\scriptsize Resume, Roles,\\ Assessments};
+\node[group, fit=(t1)(hr)(cp)] (fe) {};
+\node[title, below=14mm of fe.south] (t2) {Backend API (FastAPI, JWT, RBAC)};
+\node[box, below=2mm of t2, text width=18mm] (r1) {Auth \&\\ Candidates};
+\node[box, right=3mm of r1, text width=18mm] (r2) {Jobs \&\\ Assessments};
+\node[box, right=3mm of r2, text width=18mm] (r3) {Pipeline \&\\ Reviews};
+\node[box, left=3mm of r1, text width=18mm] (r0) {Bias, Audit,\\ Dashboard};
+\node[group, fit=(t2)(r0)(r3)] (api) {};
+\node[agent, below=16mm of r1, text width=26mm] (lg) {LangGraph\\ orchestrator};
+\node[agent, right=6mm of lg, text width=30mm] (qg) {QuestionGeneration-\\Agent};
+\node[agent, left=6mm of lg, text width=26mm] (bias) {Bias checker\\\scriptsize Fisher, Wilson, 4/5};
+\node[box, below=7mm of qg, text width=30mm] (sb) {Code sandbox\\\scriptsize isolated interpreter};
+\node[box, below=7mm of lg, text width=26mm] (parse) {Resume parser\\\scriptsize PDF/DOCX/Kaggle HTML};
+\node[box, below=7mm of bias, text width=26mm] (llm) {Gemini (optional)\\\scriptsize deterministic fallback};
+\node[store, below=22mm of parse, text width=34mm] (db) {SQLite / PostgreSQL\\\scriptsize ATS records, audit ledger};
+\node[store, left=8mm of db, text width=24mm] (csv) {Kaggle Resume\\ Dataset (CSV)};
+\node[store, right=8mm of db, text width=24mm] (files) {Resume files\\\scriptsize private storage};
+\node[box, right=8mm of files, text width=20mm] (mcp) {MCP server\\\scriptsize stdio + REST};
+\draw[arr] (fe) -- node[lbl, right] {HTTPS / JSON} (api);
+\draw[arr] (r3.south) -- (lg);
+\draw[arr] (r2.south) -- (qg);
+\draw[arr] (r0.south) -- (bias);
+\draw[arr] (qg) -- (sb);
+\draw[arr] (lg) -- (parse);
+\draw[arr] (lg) -- (llm);
+\draw[arr] (lg) -- (bias);
+\draw[arr] (parse) -- (db);
+\draw[arr] (csv) -- node[lbl, above] {import} (db);
+\draw[arr] (parse) -- (files);
+\draw[arr] (mcp.south) -- ++(0,-5mm) -| node[lbl, below, pos=0.25] {ATS tools} (db.south);
+\end{tikzpicture}

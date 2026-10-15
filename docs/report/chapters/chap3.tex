@@ -1,0 +1,48 @@
+\chapter{PROPOSED SYSTEM}
+
+\paragraph\
+JASIPA is a web application in which a set of cooperating agents prepares the evidence for a hiring decision and an HR reviewer makes the decision. This chapter describes the system, its users, its advantages and its boundary.
+
+\section{Description of Proposed System}
+
+\paragraph\
+Figure \ref{Fwk1} shows the architecture. The React frontend has an HR workspace and a candidate portal. Both call a FastAPI backend that enforces authentication and role-based access. Behind the API sit the LangGraph orchestrator and its agents, the QuestionGenerationAgent, the code sandbox, the resume parser and the bias checker. All state lives in a relational database (SQLite or PostgreSQL), uploaded resume files live in private storage, and an MCP server exposes ATS records to tools.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.85\textwidth}{!}{\input{figures/architecture.tex}}
+\caption{System architecture}
+\label{Fwk1}
+\end{figure}
+
+\paragraph\
+The main modules are:
+\begin{itemize}
+\item \textbf{Resume ingestion:} validates and parses PDF/DOCX uploads and Kaggle dataset HTML into section-structured text and extracted fields.
+\item \textbf{Rubric and question generation:} creates a versioned, JD-anchored rubric for every job and an assessment for every rubric version.
+\item \textbf{Evaluation swarm:} the Resume-Screener, Skill-Assessor and Culture-Fit agents, merged by the Panel Coordinator.
+\item \textbf{Bias checker:} cohort statistics bound to each panel decision.
+\item \textbf{Decision and audit:} human decisions, two-reviewer escalation and the hash-chained audit ledger.
+\item \textbf{MCP connector:} ATS tools over stdio JSON-RPC and REST.
+\end{itemize}
+
+\section{Description of Target Users}
+\paragraph\
+\textbf{HR reviewers and recruiters} create jobs, adjust rubrics, add candidates, run evaluations, review evidence and record decisions. \textbf{Candidates} register, upload resumes, apply and take assessments; they see their progress but never scores, answer keys or other candidates' data. \textbf{Auditors and compliance staff} use the audit log and bias monitor. The design principles followed are separation of duties (agents advise, people decide), least privilege (role-scoped APIs, sandboxed code), traceability (versioned rubrics, hash-chained logs) and graceful degradation (deterministic fallbacks for every LLM call).
+
+\section{Advantages/Applications of Proposed System}
+\paragraph\
+\begin{itemize}
+\item \textbf{Consistent, explainable scoring:} every applicant to a rubric version answers the same questions and is scored against the same weights, with evidence lines for each score.
+\item \textbf{Measured skill:} code is executed against hidden tests, so a plausible-looking but wrong solution does not score well.
+\item \textbf{Honest fairness reporting:} small cohorts are reported as insufficient data rather than as fair, and a disparity is flagged only when a defined screening criterion is triggered.
+\item \textbf{Human accountability:} no automated rejection; escalated cases need two reviewers; every decision is bound to the evidence and bias check it was based on.
+\item \textbf{Works offline:} without an LLM key the system runs fully on deterministic strategies.
+\end{itemize}
+Applications include campus and lateral hiring for technical and non-technical roles, and auditing an organisation's own screening process.
+
+\section{Scope (Boundary of proposed system)}
+\paragraph\
+\textbf{In scope (implemented):} resume ingestion, rubric versioning, assessment generation and regeneration, sandboxed Python coding questions, the three-agent swarm with a Panel Coordinator, per-decision bias checks, human decisions with two-reviewer escalation, the audit ledger, the MCP connector, Kaggle dataset import, hiring-outcome recording and descriptive analytics.
+
+\textbf{Out of scope or not implemented:} interview scheduling, video interviews, OCR of scanned resumes, coding languages other than Python, single sign-on and user management for HR accounts, and any automatic learning from decisions or outcomes. The system does not hire or reject anyone.

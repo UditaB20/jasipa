@@ -1,0 +1,21 @@
+\begin{tikzpicture}[st/.style={box, minimum width=27mm}, node distance=5mm and 7mm]
+\node[st] (reg) {REGISTERED};
+\node[st, right=of reg] (app) {APPLIED};
+\node[st, right=of app] (scr) {RESUME\_SCREENED};
+\node[st, below=of scr] (tech) {TECHNICAL\_ASSESSED};
+\node[st, left=of tech] (beh) {BEHAVIORAL\_ASSESSED};
+\node[st, left=of beh] (pan) {PANEL\_EVALUATED};
+\node[st, below=of pan] (pend) {HUMAN\_REVIEW\_PENDING};
+\node[human, right=of pend, minimum width=27mm] (dec) {DECIDED};
+\node[st, right=of dec] (info) {INFO\_REQUESTED};
+\node[st, above=of reg] (man) {MANUAL\_REVIEW\_REQUIRED};
+\draw[arr] (reg) -- node[lbl,above]{apply} (app);
+\draw[arr] (app) -- node[lbl,above]{screen} (scr);
+\draw[arr] (scr) -- (tech); \draw[arr] (tech) -- (beh); \draw[arr] (beh) -- (pan);
+\draw[arr] (pan) -- node[lbl,left]{bias check} (pend);
+\draw[arr] (pend) -- node[lbl,above]{final decision} (dec);
+\draw[arr] (pend.south) to[bend right=25] node[lbl,below]{request info} (info.south);
+\draw[arr] (info.north) to[bend right=25] node[lbl,above]{re-run pipeline} (pend.north east);
+\draw[arr] (man) -| node[lbl,above, pos=0.25]{HR releases} (app);
+\node[lbl, below=4mm of dec, align=center] {terminal; pipeline refuses re-runs};
+\end{tikzpicture}

@@ -1,0 +1,51 @@
+\chapter{INTRODUCTION}
+
+\justify
+Hiring teams screen large numbers of applications against job descriptions, assess skills, interview, and then decide. Each step is labour-intensive and inconsistent between reviewers, and automated tools that score or filter candidates can amplify historical bias. Regulation now treats AI used in recruitment as high-risk \cite{euaiact2024} and, in some jurisdictions, requires bias audits of automated employment decision tools \cite{nyc144}. This project builds an agentic system that does the evidence-gathering work of a hiring panel while keeping every decision with a person.
+
+\section{Preamble}
+\justify
+JASIPA (Job Applicant Screening and Interview Panel Agent) is an HR-side system. Recruiters create jobs, each with a versioned scoring rubric derived from the job description. Candidates arrive either from the Kaggle Resume Dataset \cite{kaggleresume} or through a candidate portal where they upload a PDF or DOCX resume, apply, and take a generated assessment. Three evaluator agents then score the resume, the technical answers (including code executed in a sandbox) and the behavioural answers; a Panel Coordinator merges them into a recommendation; a bias checker records cohort statistics against that recommendation; and an HR reviewer records the final decision. Every step is written to a tamper-evident audit log.
+
+\section{Motivation}
+\justify
+\begin{itemize}
+\item \textbf{Consistency.} A written rubric applied identically to every applicant is easier to defend than ad-hoc judgement. JASIPA versions rubrics so each decision can be traced to the exact criteria used.
+\item \textbf{Evidence over impressions.} Coding ability is measured by executing code against tests rather than by reading it; behavioural answers are assessed for concrete STAR evidence.
+\item \textbf{Fairness under small samples.} Bias screens such as the four-fifths rule \cite{eeoc1978} give unstable answers on small cohorts. Hiring pools are often small, so the system must say when data is insufficient instead of implying fairness.
+\item \textbf{Human accountability.} Automated rejection is legally and ethically risky \cite{raghavan2020}. The system therefore never rejects or hires; it prepares evidence for a reviewer.
+\end{itemize}
+
+\section{Literature Study}
+\justify
+\textbf{Algorithmic hiring.} Raghavan et al. \cite{raghavan2020} analysed vendors of pre-employment assessments and found that claims of bias mitigation usually rest on the four-fifths rule applied to model outputs, with little validation evidence published. This motivates reporting statistical uncertainty and keeping humans in the decision.
+
+\textbf{Adverse-impact testing.} The EEOC Uniform Guidelines \cite{eeoc1978} define the four-fifths rule: a selection rate below 80\% of the highest group's rate is generally regarded as evidence of adverse impact, while smaller differences may still matter when statistically significant and large samples are involved. For small groups, Fisher's exact test \cite{fisher1922} gives an exact significance test for a 2$\times$2 table, and the Wilson score interval \cite{wilson1927} gives a well-behaved confidence interval for a proportion near 0 or 1.
+
+\textbf{Regulation.} The EU AI Act \cite{euaiact2024} classifies AI systems for recruitment and candidate evaluation as high-risk, requiring human oversight, logging and data governance. New York City Local Law 144 \cite{nyc144} requires bias audits of automated employment decision tools.
+
+\textbf{Agent frameworks and tool protocols.} LangGraph \cite{langgraph} models agent workflows as explicit state graphs with parallel branches, which suits a panel of independent evaluators merged by a coordinator. The Model Context Protocol \cite{mcp2024} standardises how agents call external tools; JASIPA uses it to expose applicant-tracking (ATS) records to agents.
+
+\section{Problem Definition}
+\justify
+Design and implement an HR-side agent that takes a candidate from resume screening through skill assessment to an interview-panel recommendation using the tools \texttt{resume\_screen}, \texttt{skill\_assess} and \texttt{bias\_check}; a job-description-anchored scoring rubric; memory of each candidate's pipeline stage and history across rounds; an MCP connector to an ATS-style database; swarm orchestration of Resume-Screener, Skill-Assessor and Culture-Fit agents merged by a Panel Coordinator; and a bias check on every merged decision. No candidate may be rejected without human review, and the bias-check output must be logged with every panel decision.
+
+\section{Objectives of the project}
+\justify
+Table \ref{tab:objectives} lists the objectives and their status at submission.
+
+\begin{table}[H]\centering\small
+\caption{Objectives and completion status}\label{tab:objectives}
+\begin{tabular}{|p{0.6cm}|p{8.6cm}|p{4.6cm}|}\hline
+\textbf{No.} & \textbf{Objective} & \textbf{Status (evidence)}\\ \hline
+O1 & Screen resumes (PDF, DOCX, dataset) against a versioned, JD-anchored rubric & Completed (BE resume and screening tests, E2E-005)\\ \hline
+O2 & Generate role-specific assessments (MCQ, coding, scenario, STAR) and support regeneration & Completed (question-generation tests, E2E-003/004)\\ \hline
+O3 & Score code by executing it against hidden tests in an isolated sandbox & Completed (sandbox tests, E2E-006)\\ \hline
+O4 & Orchestrate three evaluator agents and a Panel Coordinator as a LangGraph swarm & Completed (orchestration tests, E2E-007)\\ \hline
+O5 & Run a bias check on every panel decision with small-sample-aware statistics & Completed (bias tests); real cohort data not available (Section \ref{sec:limits})\\ \hline
+O6 & Guarantee human decisions, two-reviewer escalation and an auditable log & Completed (decision and audit tests)\\ \hline
+O7 & Provide an MCP connector to the ATS database & Completed for stdio and REST transports (MCP tests)\\ \hline
+O8 & Use the Kaggle Resume Dataset as candidate data & Completed for six categories with authored job descriptions\\ \hline
+O9 & Agents that learn from reviewer decisions and hiring outcomes & Not implemented: outcomes are stored and reported only (Section \ref{sec:learning})\\ \hline
+\end{tabular}
+\end{table}

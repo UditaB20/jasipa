@@ -1,0 +1,69 @@
+\documentclass[12pt,a4,oneeside]{report}
+\usepackage[top=.80in, bottom=.80in, left=1.1in, right=.80in, headsep=10pt ]{geometry}
+\usepackage{setspace}
+\usepackage[titletoc]{appendix}
+\usepackage{amsmath}    
+\usepackage{verbatim}   
+\usepackage{color}      
+ 
+\usepackage{hyperref}   
+\usepackage{graphicx}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+\usepackage{multirow}
+\usepackage{subfigure}
+\usepackage[T1]{fontenc}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{fancyhdr}
+\usepackage{url}
+\usepackage{array}
+\usepackage{amssymb}
+\usepackage{float}
+\usepackage[utf8]{inputenc}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{tabu}
+\usepackage{hhline}
+\usepackage{algpseudocode}
+\usepackage{ragged2e}
+\usepackage{longtable}
+\usepackage{xcolor}
+\usepackage{tikz}
+\input{figures/styles.tex}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+
+
+
+
+\titleformat{\chapter}[display]
+{\normalfont\huge\bfseries}{\chaptertitlename\ \thechapter}{18pt}{\Huge\centering}
+\titlespacing*{\chapter}{0pt}{-15pt}{20pt}
+
+\begin{document}
+% \onehalfspacing \input{certificate.tex}  % same file as Certificate.tex on case-insensitive systems
+\onehalfspacing \input{Certificate.tex}
+\onehalfspacing \input{abstract.tex} %write the abstract after completion of project
+\onehalfspacing \input{ack.tex}     %uncomment this for final report
+\pagenumbering{roman}
+\onehalfspacing \input{contents.tex}
+\onehalfspacing \input{Head_Footer.tex}
+\onehalfspacing \input{chapters/chap1.tex}
+\onehalfspacing \input{chapters/chap2.tex} 
+\onehalfspacing \input{chapters/chap3.tex}
+\onehalfspacing \input{chapters/chap4.tex}
+\onehalfspacing \input{chapters/chap5.tex}
+\onehalfspacing \input{chapters/chap6.tex}
+\onehalfspacing \input{chapters/chap7.tex}
+\onehalfspacing \input{chapters/chap8.tex}
+\bibliographystyle{unsrt}
+\renewcommand{\bibname}{REFERENCES}
+\bibliography{Bibliography}
+    \addcontentsline{toc}{chapter}{REFERENCES}
+        \begin{appendices}
+	\onehalfspacing \input{chapters/app.tex} 
+ 
+   \end{appendices}
+
+\end{document}
+

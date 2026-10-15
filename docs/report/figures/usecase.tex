@@ -1,0 +1,23 @@
+\begin{tikzpicture}[uc/.style={ellipse, draw=line, fill=white, font=\sffamily\scriptsize, text=ink, minimum width=46mm, minimum height=7mm, align=center}]
+\node[human, text width=16mm] (hr) at (-2.6,-0.6) {HR\\ reviewer};
+\node[box, text width=16mm] (cand) at (14.6,-0.1) {Candidate};
+\node[agent, text width=16mm] (sys) at (6,-6.2) {Agents};
+\node[uc] (u1) at (3,2.4) {Create job \& edit rubric};
+\node[uc] (u2) at (3,1.4) {Regenerate assessment};
+\node[uc] (u3) at (3,0.4) {Upload resume / add candidate};
+\node[uc] (u4) at (3,-0.6) {Run evaluation pipeline};
+\node[uc] (u5) at (3,-1.6) {Review panel \& bias check};
+\node[uc] (u6) at (3,-2.6) {Record decision};
+\node[uc] (u7) at (3,-3.6) {Verify audit ledger};
+\node[uc] (v1) at (9,1.9) {Register \& sign in};
+\node[uc] (v2) at (9,0.9) {Upload resume (PDF/DOCX)};
+\node[uc] (v3) at (9,-0.1) {Apply to a role};
+\node[uc] (v4) at (9,-1.1) {Take MCQ/coding/STAR tests};
+\node[uc] (v5) at (9,-2.1) {Track application status};
+\node[uc] (w1) at (6,-4.7) {Screen, score, merge, check bias};
+\node[group, fit=(u1)(u7)(v1)(v5)(w1), label={[lbl]above:JASIPA}] {};
+\foreach \u in {u1,u2,u3,u4,u5,u6,u7} \draw[draw=line] (hr) -- (\u.west);
+\foreach \v in {v1,v2,v3,v4,v5} \draw[draw=line] (cand) -- (\v.east);
+\draw[draw=line] (sys) -- (w1);
+\draw[arr, dashed] (u4.east) -| node[lbl, above, pos=0.25] {include} (w1.north);
+\end{tikzpicture}

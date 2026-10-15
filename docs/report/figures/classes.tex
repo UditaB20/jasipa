@@ -1,0 +1,14 @@
+\begin{tikzpicture}[cls/.style={rectangle split, rectangle split parts=2, draw=line, fill=white, rounded corners=2pt, font=\sffamily\scriptsize, text=ink, align=left, text width=36mm, rectangle split part fill={accentsoft,white}}]
+\node[cls] (es) at (0,0) {\textbf{EvaluationStrategy} \emph{(abstract)}\nodepart{two}evaluate(**kwargs) $\rightarrow$ dict};
+\foreach \n/\x/\y in {LLMStrategy/-6/-2.6, RegexStrategy/-2/-2.6, HeuristicStrategy/2/-2.6, STARFrameworkStrategy/6/-2.6, TemplateSynthesisStrategy/-4/-4.2, HumanExpertStrategy/0/-4.2, TemplateQuestionStrategy/4/-4.2}
+  { \node[box, font=\sffamily\scriptsize, minimum height=6mm] (\n) at (\x,\y) {\n}; \draw[-{Triangle[open]}, draw=muted] (\n) -- (es); }
+\node[cls] (sc) at (8.5,0) {\textbf{StrategyChain}\nodepart{two}execute() first success\\records strategy\_metrics};
+\draw[-{Diamond[open]}, draw=muted] (es) -- (sc);
+\node[cls] (rs) at (-6,2.6) {\textbf{ResumeScreenerAgent}\nodepart{two}evaluate(resume, jd, rubric)};
+\node[cls] (sa) at (-2,2.6) {\textbf{SkillAssessorAgent}\nodepart{two}evaluate(questions, answers)\\uses code sandbox};
+\node[cls] (cf) at (2,2.6) {\textbf{CultureFitAgent}\nodepart{two}evaluate(STAR answers)};
+\node[cls] (pc) at (6,2.6) {\textbf{PanelCoordinatorAgent}\nodepart{two}synthesize(..., history)};
+\node[cls] (qg) at (-4,5) {\textbf{QuestionGenerationAgent}\nodepart{two}generate(jd, rubric, variant)};
+\node[cls] (bc) at (2,5) {\textbf{BiasCheckerAgent}\nodepart{two}check(candidate, decision)};
+\foreach \a in {rs,sa,cf,pc,qg} \draw[-{Stealth}, draw=line, dashed] (\a) -- (sc);
+\end{tikzpicture}

@@ -1,0 +1,93 @@
+\chapter{IMPLEMENTATION}
+
+\paragraph\
+JASIPA is implemented as a FastAPI backend (about 6,500 lines of Python under \texttt{backend/app}) and a React frontend (about 2,900 lines excluding tests). This chapter describes the methodology, the modules, the agentic components and how decisions are produced.
+
+\section{Proposed Methodology}
+\paragraph\
+The methodology follows the evidence-to-decision path of a hiring panel (Figure \ref{fig:workflow}):
+\begin{enumerate}
+\item \textbf{Anchor the criteria.} Each job gets a rubric: resume points (required skills 50, preferred 15, experience 20, education and projects 15), technical sub-weights (MCQ 30, coding 40, written 30), behavioural competencies totalling 100 points, and stage weights (resume 0.4, technical 0.4, behavioural 0.2). Edits create a new version.
+\item \textbf{Standardise the assessment.} One question set per job and rubric version, pinned to each applicant when they apply.
+\item \textbf{Gather independent evidence.} Three agents score different evidence and never read each other's outputs.
+\item \textbf{Merge deterministically.} The Panel Coordinator merges scores in code and can only route to a human.
+\item \textbf{Check for disparity, then decide.} A bias check is bound to the panel decision; a reviewer decides with both in view.
+\item \textbf{Record everything.} Each step appends a hash-chained audit entry.
+\end{enumerate}
+
+\section{Description of Modules}
+
+\subsection{Resume ingestion}
+\textbf{Module:} \texttt{resume\_parser.extract\_text}, \texttt{ingest\_resume}, \texttt{html\_resume\_to\_text}.
+\textbf{Input:} file name and bytes (PDF/DOCX), or dataset HTML. \textbf{Output:} text, ordered sections, skills, education, experience years (stated, or merged from dated roles in month-name or MM/YYYY form), projects.
+The extension and file signature must agree (a renamed file is rejected); encrypted, image-only, oversized (5 MB) and over-20-page PDFs are rejected with user-readable messages. Files are saved under random names and never served statically; only authorised endpoints return the original. Skills are matched as whole tokens, so \texttt{C} does not match inside \texttt{C++} (a defect found and fixed by the test suite).
+
+\subsection{QuestionGenerationAgent}
+\textbf{Module:} \texttt{question\_generator.QuestionGenerationAgent.generate}.
+\textbf{Input:} job description, rubric criteria, variant number. \textbf{Output:} technical questions (MCQ, coding, scenario) and STAR behavioural questions.
+With an LLM configured, the LLM drafts questions from the JD's responsibilities, skills, proficiency level and rubric competencies; items are schema-validated, and a coding challenge is kept only if its reference solution passes all of its own tests in the sandbox. Without an LLM, a deterministic generator selects curated MCQs for the JD's skills, a coding challenge matched to the role's domain and level (only when required skills include programming), scenario questions tied to stated responsibilities, and one STAR question per competency. Question sets are cached per job and rubric version. \emph{Regeneration} asks for the next variant, saves the new set only if it differs from the current one, and otherwise returns an error; this fixed a defect where Regenerate reported success while producing identical questions.
+
+\subsection{Code sandbox}
+\textbf{Module:} \texttt{code\_sandbox.run\_python\_tests}.
+\textbf{Input:} code, function name, tests (arguments, expected output, hidden flag). \textbf{Output:} status and per-test results.
+Each run starts a fresh interpreter with an empty working directory, a cleared environment, CPU/memory/file-size/process limits, a restricted import list and a CPython audit hook that blocks sockets, subprocesses, file writes and directory listing. Only the inputs enter the sandbox; outputs are compared with expected values in the parent process, so forged output cannot fake a pass. Compilation errors, runtime errors, time-outs and missing functions are reported per test. An optional Docker backend adds a network-less, read-only container.
+
+\subsection{Evaluation agents}
+\begin{itemize}
+\item \textbf{Resume-Screener:} LLM rubric scoring when available, otherwise rubric-weighted rule matching; resume text is PII-redacted and screened for prompt-injection phrases first.
+\item \textbf{Skill-Assessor:} MCQs by answer key, coding by sandbox test pass rate, open-ended answers by LLM or keyword rubric; categories combined with the rubric's sub-weights. The LLM cannot override objective scores.
+\item \textbf{Culture-Fit:} STAR evidence per competency, weighted by rubric points; very brief answers are reported as insufficient evidence.
+\item \textbf{Panel Coordinator:} weighted merge, strengths, gaps, divergence notes, previous-round context, routing label and two-reviewer escalation; an optional LLM may only rephrase the computed facts into a summary.
+\end{itemize}
+
+\subsection{Bias checker}
+\textbf{Module:} \texttt{fairness\_stats.compare\_groups}, \texttt{bias\_service.comprehensive\_bias\_check}.
+\textbf{Input:} candidate, panel decision, pool of latest decisions. \textbf{Output:} checks for AI recommendations, final human decisions, post-hire outcomes, score thresholds and rationale language, plus an overall status.
+Cohorts are the HR-recorded monitoring label (\texttt{cohort\_tag}). It is never inferred from resume text and never sent to agents; missing labels are excluded and counted. Algorithm \ref{alg:bias} gives the per-cohort classification.
+
+\begin{algorithm}[H]
+\caption{Cohort selection-rate classification} \label{alg:bias}
+\begin{algorithmic}[1]
+\Require cohorts with $n_g$ candidates and $s_g$ selected; threshold $\tau = 0.8$; $\alpha = 0.05$; minimum size $n_{min} = 5$
+\State $ref \gets \arg\max_g s_g/n_g$ over cohorts with $n_g \ge n_{min}$
+\For{each cohort $g$}
+  \If{$n_g < n_{min}$ or fewer than two eligible cohorts or $s_{ref} = 0$} \State status $\gets$ \textsc{Insufficient data}
+  \Else
+    \State $r \gets (s_g/n_g) / (s_{ref}/n_{ref})$; $p \gets$ Fisher's exact test of $g$ vs.\ all other labelled candidates
+    \If{$r < \tau$} \State status $\gets$ \textsc{Disparity detected} (significant if $p<\alpha$, else not significant)
+    \Else \State status $\gets$ \textsc{No indicator detected} (note if $p<\alpha$; power warning if $n_g<30$) \EndIf
+    \State flag \emph{fragile} if one outcome change would flip $r < \tau$
+  \EndIf
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Decisions, audit and MCP}
+\texttt{/api/reviews/decide} accepts a decision only for the latest panel decision that has a bias check. It binds both identifiers to the review, enforces two different agreeing reviewers when the panel escalated, and keeps the application open for \emph{request more information}. The audit service appends entries whose SHA-256 hash covers the previous hash and the full entry content, and a verifier recomputes the chain. The MCP connector (\texttt{app/mcp/stdio\_server.py}) implements \texttt{initialize}, \texttt{tools/list} and \texttt{tools/call} over stdio and exposes the same tools through REST; it does not expose decision recording and rejects any panel label other than the three routing labels.
+
+\subsection{Frontend}
+The React frontend has an HR workspace (dashboard, candidates, candidate dossier with Overview, Resume, Assessments, Panel \& bias check, Decision and History tabs, jobs with rubric editor and assessment preview, bias monitor, hiring outcomes, audit log, settings) and a candidate portal (application status, open roles, assessments with a code editor, profile and resume). A shared design system provides a light, minimal theme, loading/empty/error states, inline validation, toasts and a responsive layout. Timestamps from the API (stored as UTC without a zone) are parsed as UTC and displayed in IST.
+
+\section{Agentic AI components and technologies}
+\begin{table}[H]\centering\small\caption{Agentic components, models, tools and dependencies}
+\begin{tabular}{|p{3.4cm}|p{10.6cm}|}\hline
+\textbf{Component} & \textbf{Implementation}\\ \hline
+Orchestration & LangGraph \texttt{StateGraph}: dispatch, three parallel evaluator nodes, panel node, bias node\\ \hline
+Model & Google Gemini (default \texttt{gemini-2.5-flash}) over HTTPS, JSON responses, temperature 0.2; optional, with deterministic fallbacks\\ \hline
+Tools & \texttt{resume\_screen} (Resume-Screener), \texttt{skill\_assess} (Skill-Assessor with code sandbox), \texttt{bias\_check} (bias checker); MCP ATS tools\\ \hline
+Skill & Versioned, JD-anchored scoring rubric and the structured screening method built on it\\ \hline
+Memory & Candidate stage machine; per-round panel history fed to the Panel Coordinator; cached question sets and screenings; audit history\\ \hline
+Connector & MCP stdio JSON-RPC server and REST facade over the ATS database\\ \hline
+Governance & Routing-only panel labels, bias check per decision, human decision endpoint, two-reviewer rule, hash-chained audit\\ \hline
+Libraries & FastAPI, SQLAlchemy, Pydantic, PyMuPDF, python-docx, bcrypt, python-jose, React, Vite\\ \hline
+\end{tabular}\end{table}
+
+\section{Reasoning and Decision-Making}
+\paragraph\
+\textbf{Why this architecture.} Hiring decisions must be repeatable, explainable and contestable. Everything that affects routing is therefore computed by inspectable code anchored to a versioned rubric: answer keys, test execution, weighted merges and threshold rules. The LLM is used only where language understanding adds value (open-ended answers, drafting questions, summarising) and is constrained so that it cannot change objective scores, routing labels or bias results. Independent agents reduce the risk that one weak signal, such as keyword-heavy resumes, dominates. When they disagree strongly (a spread of 30 or more points) the case is escalated to two reviewers rather than averaged away. Running every agent without an LLM keeps the system usable and testable offline.
+
+\textbf{How a decision is produced.} The three agents each produce a score, status and evidence. The coordinator merges them with the rubric weights; incomplete evidence routes to \emph{additional information required}, a merged score of 75 or more without major divergence routes to \emph{proceed}, and everything else to \emph{careful review}. All three labels go to a human. The bias check adds context but never changes the label. The reviewer reads the evidence and bias check and records the decision with a reason.
+
+\section{Learning and Adaptation}\label{sec:learning}
+\paragraph\
+JASIPA does \emph{not} learn. No model is trained or fine-tuned, there is no retrieval of past cases, and no reviewer decision, assessment result or hiring outcome changes later agent behaviour. What exists: (i) stored evaluation history; (ii) memory of earlier panel rounds, which the coordinator reports as context without changing scores; (iii) caches of question sets and screenings; and (iv) hiring-outcome records with descriptive analytics, which the system explicitly does not use to change rubrics or decisions. Rubric changes are manual, versioned HR edits. A feedback loop was deliberately left out: learning from historical hiring outcomes can encode historical bias and would need validated, audited procedures. The stored outcome data is a foundation for such work in future (Chapter 8).
