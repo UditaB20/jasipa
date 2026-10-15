@@ -35,61 +35,12 @@ flowchart LR
 | Orchestration | LangGraph: dispatch → (screen, skills, culture in parallel) → panel coordinator → bias check. Nodes are pure; persistence happens sequentially in the fan-in. |
 | Governance | Panel can only route (`PROCEED_TO_HUMAN_REVIEW`, `HUMAN_REVIEW_REQUIRED`, `ADDITIONAL_INFORMATION_REQUIRED`). Escalated decisions require two different reviewers who agree. |
 
-## Visual Walkthrough & UI Tour
+## Candidate Evaluation & Swarm Overview
 
 <p align="center">
-  <img src="docs/screenshots/02-dashboard.png" alt="JASIPA HR Workspace Dashboard" width="95%" />
+  <img src="docs/screenshots/06-panel-bias.png" alt="JASIPA Candidate Evaluation & Multi-Agent Swarm Overview" width="95%" />
   <br />
-  <em>JASIPA HR Workspace: Pipeline stage tracking, active requisitions, and pending human reviews</em>
-</p>
-
-### 1. Job Creation, Versioned Rubrics & Generated Assessments
-`QuestionGenerationAgent` analyzes job responsibilities and competency requirements to generate balanced assessments (MCQs, live coding challenges, scenario questions, and STAR behavioral prompts).
-
-<p align="center">
-  <img src="docs/screenshots/03-job-assessment.png" alt="Job Assessment & Rubrics" width="90%" />
-</p>
-
-### 2. Candidate Portal & Isolated Code Sandbox
-Candidates take assessments in a dedicated portal. Coding challenges compile and execute inside an isolated execution sandbox featuring strict resource limits and CPython audit hooks.
-
-<p align="center">
-  <img src="docs/screenshots/05-candidate-coding.png" alt="Candidate Portal Coding Sandbox" width="90%" />
-</p>
-
-### 3. Candidate Profile & Extracted Resume Evidence
-PDF and DOCX resumes are parsed into structured competencies, experience timelines, and verified skills, and matched against job criteria.
-
-<p align="center">
-  <img src="docs/screenshots/04-candidate-resume.png" alt="Candidate Resume Screening" width="90%" />
-</p>
-
-### 4. Multi-Agent Swarm Synthesis & Panel Decision
-The `PanelCoordinatorAgent` gathers evaluations from the Resume Screener, Skill Assessor, and Culture-Fit agents, detects perspective divergences, and recommends routing.
-
-<p align="center">
-  <img src="docs/screenshots/06-panel-bias.png" alt="Multi-Agent Panel Evaluation" width="90%" />
-</p>
-
-### 5. Human-in-the-Loop & Four-Eyes Escalation
-The AI is structurally barred from making final hiring decisions. For divergent or borderline candidates, the system enforces the enterprise Four-Eyes Principle requiring consensus from two distinct human reviewers.
-
-<p align="center">
-  <img src="docs/screenshots/07-decision.png" alt="Human Review & Decision" width="90%" />
-</p>
-
-### 6. Bias Monitor & Small-Sample Fairness Auditing
-The `BiasCheckerAgent` continuously audits selection rates across candidate cohorts using the EEOC 4/5ths rule, two-sided Fisher's Exact test, and Wilson confidence intervals.
-
-<p align="center">
-  <img src="docs/screenshots/10-bias-monitor.png" alt="Bias Monitor & Cohort Analytics" width="90%" />
-</p>
-
-### 7. Tamper-Evident Cryptographic Audit Ledger
-Every single event, model output, rubric version, and human decision is recorded in an immutable SHA-256 cryptographic hash-chained audit log.
-
-<p align="center">
-  <img src="docs/screenshots/08-audit.png" alt="Tamper-Evident Audit Log" width="90%" />
+  <em>Candidate Evaluation Overview: Independent evaluations from the Resume, Technical (code sandbox), and Behavioral agents synthesized by the Panel Coordinator with attached bias check and human-in-the-loop decision routing.</em>
 </p>
 
 ## Key behaviour
